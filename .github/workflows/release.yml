@@ -15,8 +15,8 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -31,17 +31,27 @@ jobs:
           V=$(node -p "require('./package.json').version")
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
           if gh release view "v$V" >/dev/null 2>&1; then echo "exists=1" >> "$GITHUB_OUTPUT"; else echo "exists=0" >> "$GITHUB_OUTPUT"; fi
-      - name: Build and publish
+      - name: Build installer
         if: steps.ver.outputs.exists == '0'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --x64 --publish always
-      - name: Release notes
+        shell: bash
+        run: |
+          set -o pipefail
+          npx electron-builder --win nsis --x64 --publish never 2>&1 | tee build.log || {
+            tail -n 25 build.log | tr '\r' ' ' | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          }
+      - name: Publish GitHub Release
         if: steps.ver.outputs.exists == '0'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           T="${{ steps.ver.outputs.tag }}"
-          F="release-notes/$T.md"
-          if [ -f "$F" ]; then gh release edit "$T" --notes-file "$F" --title "Questbook ${T#v}"; fi
+          V="${T#v}"
+          NOTES="release-notes/$T.md"
+          [ -f "$NOTES" ] || echo "Questbook $V" > "$NOTES"
+          gh release create "$T" "dist/Questbook-Setup-$V.exe" "dist/Questbook-Setup-$V.exe.blockmap" dist/latest.yml \
+            --target "$GITHUB_SHA" --title "Questbook $V" --notes-file "$NOTES" 2>&1 | tee pub.log || {
+            tail -n 10 pub.log | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          }
