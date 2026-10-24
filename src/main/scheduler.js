@@ -86,21 +86,24 @@ function tick(state, ctx) {
     });
   }
 
-  // 6) Sagas gone quiet: long goals die silently, so name the next concrete step
+  // 6) Sagas gone quiet: a gentle invitation, never a reproach.
+  //    First after quietDays, then every remindEvery days; activity or resume resets the cycle;
+  //    paused sagas and sagas with reminders off stay silent.
   const hourNow = new Date(now).getHours();
   if (active && hourNow >= 10 && hourNow < 21) {
-    for (const g of view.sagas) {
-      if (g.status !== 'active' || !g.isQuiet) continue;
-      const key = `${today}|saga|${g.id}`;
-      if (state.fired[key]) continue;
-      state.fired[key] = 1;
+    for (const v of view.sagas) {
+      const g = state.sagas.find((x) => x.id === v.id);
+      if (!g || !L.sagaNudgeDue(g, v, now)) continue;
+      g.lastNudgeAt = now;
+      const action = v.nextStep ? v.nextStep.text : v.current ? `глава «${v.current.title}»` : 'любое маленькое действие';
       events.push({
         kind: 'notify',
-        title: `«${g.title}» молчит ${g.quietDays} ${L.plural(g.quietDays, 'день', 'дня', 'дней')}`,
-        body: g.current ? `Сессия на ${g.sessionMin} мин: глава «${g.current.title}».` : `Сессия на ${g.sessionMin} мин.`,
+        title: `Хочешь продолжить «${v.title}»?`,
+        body: `Начни с 5 минут: ${action}.`,
         open: 'sagas',
+        soft: true,
       });
-      break; // one saga nudge per tick
+      break; // at most one saga invitation per tick
     }
   }
 

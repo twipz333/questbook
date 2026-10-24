@@ -22,7 +22,7 @@ function createActions(getState, now = () => Date.now()) {
 
   function revoke(type, ref) {
     const s = S();
-    const anyDay = type === 'chapter' || type === 'saga' || type === 'quest';
+    const anyDay = type === 'chapter' || type === 'saga' || type === 'quest' || type === 'saga-step';
     const i = s.log.findIndex((e) => e.type === type && e.ref === ref && (anyDay || L.dayKey(e.at, s.settings.dayStartHour) === today()));
     if (i >= 0) { s.player.xp = Math.max(0, s.player.xp - (s.log[i].xp || 0)); s.log.splice(i, 1); }
   }
@@ -114,6 +114,7 @@ function createActions(getState, now = () => Date.now()) {
       const q = findQ(id);
       if (!q || q.status !== 'done') return { ok: false };
       revoke('quest', id);
+      if (q.sagaId) S().sagaLog = S().sagaLog.filter((e) => e.questId !== id);
       q.status = 'inbox'; q.doneAt = null; q.doneDay = null;
       return { ok: true };
     },
@@ -143,17 +144,32 @@ function createActions(getState, now = () => Date.now()) {
       const s = S();
       const q = findQ(id);
       if (!q) return { ok: false };
+      if (q.status === 'done') return { ok: false, error: 'Квест уже выполнен' }; // double click / two windows
       if (s.activeQuestId === id) pauseActive();
       q.status = 'done'; q.doneAt = now(); q.doneDay = today();
       const xp = L.questXp(q);
       const r = gain('quest', id, q.title, xp);
-      if (q.sagaId) {
+      if (q.sagaId && !s.sagaLog.some((e) => e.questId === id)) {
         const g = findG(q.sagaId);
-        const min = Math.max(1, Math.round((q.focusSec || 0) / 60)) || q.estimateMin || 30;
-        s.sagaLog.push({ id: L.uid(), sagaId: q.sagaId, chapterId: q.chapterId || null, at: now(), min, questId: id });
+        const sec = q.focusSec || 0;
+        // actual focus time; if the timer never ran, fall back to the planned length and flag it
+        const estimated = sec === 0;
+        const min = estimated ? (q.estimateMin || 0) : Math.max(1, Math.round(sec / 60));
+        const entry = {
+          id: L.uid(), sagaId: q.sagaId, chapterId: q.chapterId || null, at: now(), min, estimated,
+          questId: id, typeId: q.sagaTypeId || null, plannedStepId: q.sagaStepId || null,
+          stepId: null, stepDone: false, note: '', wrapped: false,
+        };
+        s.sagaLog.push(entry);
         if (g) {
           const v = L.sagaView(s, g, now());
-          return { ok: true, toast: `Сессия «${g.title}» · +${xp} XP · ${v.weekSessions}/${v.target} на неделе`, xp, sagaId: g.id, ...r };
+          const ch = v.chapters.find((c) => c.id === entry.chapterId);
+          const planned = ch && ch.steps.find((st) => st.id === entry.plannedStepId);
+          return {
+            ok: true, xp, sagaId: g.id, ...r,
+            toast: `Сессия «${g.title}» · ${min} мин · ${v.weekSessions}/${v.target} на неделе`,
+            sagaSession: { logId: entry.id, sagaId: g.id, title: g.title, min, estimated, stepId: planned && !planned.done ? planned.id : null, stepText: planned ? planned.text : '' },
+          };
         }
       }
       return { ok: true, toast: `Квест выполнен · +${xp} XP`, xp, ...r };
@@ -266,19 +282,63 @@ function createActions(getState, now = () => Date.now()) {
       const title = (p.title || '').trim();
       if (!title) return { ok: false, error: 'Нужно название саги' };
       const old = p.id ? findG(p.id) : null;
+      // Merge by id: the saga editor only sends id + title, so everything else a chapter
+      // carries (done, goal, criterion, steps, future fields) must survive the edit.
       const chapters = (p.chapters || []).filter((c) => c.title && c.title.trim()).map((c) => {
-        const prev = old && old.chapters.find((x) => x.id === c.id);
-        return { id: c.id || L.uid(), title: c.title.trim(), done: prev ? prev.done : false, doneAt: prev ? prev.doneAt : null };
+        const prev = old && c.id && old.chapters.find((x) => x.id === c.id);
+        if (prev) return { ...L.chapterOf(prev), title: c.title.trim() };
+        return { id: L.uid(), title: c.title.trim(), done: false, doneAt: null, goal: '', criterion: '', steps: [] };
       });
+      const sessionTypes = (p.sessionTypes || []).filter((t) => t.name && t.name.trim())
+        .map((t) => ({ id: t.id || L.uid(), name: t.name.trim().slice(0, 40) }));
       const fields = {
-        title, why: (p.why || '').trim(), area: p.area === 'work' ? 'work' : 'life', chapters,
+        title, why: (p.why || '').trim(), area: p.area === 'work' ? 'work' : 'life', chapters, sessionTypes,
         targetPerWeek: Math.max(1, Math.min(7, +p.targetPerWeek || 3)),
         sessionMin: Math.max(5, Math.min(240, +p.sessionMin || 30)),
         quietDays: Math.max(2, Math.min(30, +p.quietDays || 5)),
+        remind: p.remind !== false,
+        remindEvery: Math.max(3, Math.min(30, +p.remindEvery || 7)),
       };
-      if (old) { Object.assign(old, fields); return { ok: true }; }
+      if (old) {
+        Object.assign(old, fields);
+        if (old.status === 'done' && chapters.some((c) => !c.done)) { old.status = 'active'; old.doneAt = null; revoke('saga', old.id); }
+        return { ok: true };
+      }
       s.sagas.push({ id: L.uid(), createdAt: now(), status: 'active', doneAt: null, ...fields });
-      return { ok: true, toast: 'Сага начата. Первая сессия — когда будешь готов.' };
+      return { ok: true, toast: 'Сага начата. Начни с одной главы и пары маленьких шагов.' };
+    },
+
+    /** Edit one chapter's plan: goal, completion criterion and small steps (done state kept by id). */
+    chapterSave(sagaId, chId, p) {
+      const g = findG(sagaId);
+      const idx = g ? g.chapters.findIndex((c) => c.id === chId) : -1;
+      if (idx < 0) return { ok: false, error: 'Глава не найдена' };
+      const prev = L.chapterOf(g.chapters[idx]);
+      const title = (p.title || '').trim() || prev.title;
+      const steps = (p.steps || []).filter((x) => x.text && x.text.trim()).map((x) => {
+        const old = x.id && prev.steps.find((st) => st.id === x.id);
+        return old ? { ...old, text: x.text.trim() } : { id: L.uid(), text: x.text.trim(), done: false, doneAt: null };
+      });
+      g.chapters[idx] = { ...prev, title, goal: (p.goal || '').trim(), criterion: (p.criterion || '').trim(), steps };
+      return { ok: true };
+    },
+
+    /** Steps are ticked independently; finishing a chapter stays a manual decision. */
+    chapterToggleStep(sagaId, chId, stepId, forceDone) {
+      const g = findG(sagaId);
+      const ch = g && g.chapters.find((c) => c.id === chId);
+      if (!ch || !Array.isArray(ch.steps)) return { ok: false };
+      const st = ch.steps.find((x) => x.id === stepId);
+      if (!st) return { ok: false };
+      const target = forceDone === undefined ? !st.done : !!forceDone;
+      if (target === !!st.done) return { ok: true };
+      st.done = target;
+      st.doneAt = target ? now() : null;
+      if (!target) { revoke('saga-step', stepId); return { ok: true }; }
+      const r = gain('saga-step', stepId, `${g.title}: ${st.text}`, L.SAGA_STEP_XP);
+      const left = ch.steps.filter((x) => !x.done).length;
+      const hint = left ? `осталось шагов: ${left}` : (ch.criterion ? `проверь критерий главы: ${ch.criterion}` : 'все шаги главы сделаны');
+      return { ok: true, toast: `Шаг сделан · +${L.SAGA_STEP_XP} XP · ${hint}`, ...r };
     },
 
     sagaArchive(id) {
@@ -292,46 +352,93 @@ function createActions(getState, now = () => Date.now()) {
 
     sagaPause(id) {
       const g = findG(id);
-      if (!g) return { ok: false };
+      if (!g || g.status === 'done' || g.status === 'archived') return { ok: false };
       g.status = g.status === 'paused' ? 'active' : 'paused';
-      if (g.status === 'active') g.createdAt = Math.max(g.createdAt, now()); // resume resets the quiet timer
+      if (g.status === 'active') g.resumedAt = now(); // resuming resets the reminder cycle
       return { ok: true, toast: g.status === 'paused' ? 'Сага на паузе — напоминаний не будет' : 'Сага снова в пути' };
     },
 
-    /** Create (or reuse) today's session quest for the saga and start it. */
-    sagaStartSession(id) {
+    /**
+     * Start a session with a concrete action.
+     * opts.stepId: a step id, 'none' (just practise), or undefined (suggested next step)
+     * opts.min: planned length (a guide, not a timer to sit out); opts.typeId: session type
+     */
+    sagaStartSession(id, opts = {}) {
       const s = S();
       const g = findG(id);
-      if (!g) return { ok: false };
+      if (!g || g.status === 'done' || g.status === 'archived') return { ok: false, error: 'Сага не активна' };
+      if (g.status === 'paused') { g.status = 'active'; g.resumedAt = now(); }
       const v = L.sagaView(s, g, now());
+      const ch = v.current;
+      let step = null;
+      if (opts.stepId && opts.stepId !== 'none') step = ch && ch.steps.find((st) => st.id === opts.stepId && !st.done) || null;
+      else if (opts.stepId === undefined) step = v.nextStep;
+      const min = Math.max(1, Math.min(240, +opts.min || v.suggestedMin));
+      if (opts.min) g.lastPlannedMin = min;
+      const typeId = opts.typeId !== undefined ? opts.typeId : v.lastTypeId;
+      if (typeId && v.types.some((t) => t.id === typeId)) g.lastTypeId = typeId;
       let q = v.openQuestId && findQ(v.openQuestId);
       if (!q) {
-        const ch = v.current;
-        q = {
-          id: L.uid(), title: ch ? `${g.title} · ${ch.title}` : g.title, notes: '',
-          kind: 'main', area: g.area, estimateMin: g.sessionMin || 30,
-          nextStep: ch ? `Продолжить главу «${ch.title}»` : 'Сделай одну маленькую вещь по саге',
-          steps: [], status: 'today', createdAt: now(), doneAt: null, doneDay: null, focusSec: 0,
-          sagaId: g.id, chapterId: ch ? ch.id : null,
-        };
+        q = { id: L.uid(), notes: '', kind: 'main', steps: [], status: 'today', createdAt: now(), doneAt: null, doneDay: null, focusSec: 0, sagaId: g.id };
         s.quests.unshift(q);
       }
-      return A.questStart(q.id);
+      Object.assign(q, {
+        title: ch ? `${g.title} · ${ch.title}` : g.title, area: g.area, estimateMin: min,
+        nextStep: step ? step.text : (ch ? `Любое полезное действие по главе «${ch.title}»` : 'Позанимайся по саге'),
+        chapterId: ch ? ch.id : null, sagaStepId: step ? step.id : null, sagaTypeId: typeId || null,
+      });
+      const r = A.questStart(q.id);
+      return { ...r, toast: `Сессия ~${min} мин: ${q.nextStep}` };
     },
 
-    /** Session done outside the app (read a chapter on the phone, etc.). */
-    sagaLogSession(id) {
+    /** A session done outside the app. Real duration is required. opId guards against double submit. */
+    sagaLogSession(id, p = {}) {
       const s = S();
       const g = findG(id);
       if (!g) return { ok: false };
+      const min = Math.round(+p.min);
+      if (!(min > 0)) return { ok: false, error: 'Укажи, сколько минут длилось занятие' };
+      if (p.opId && s.sagaLog.some((e) => e.opId === p.opId)) return { ok: true }; // duplicate submit
       const v = L.sagaView(s, g, now());
-      s.sagaLog.push({ id: L.uid(), sagaId: id, chapterId: v.current ? v.current.id : null, at: now(), min: g.sessionMin || 30 });
-      const r = gain('saga-session', id, `${g.title}: сессия`, L.SAGA_SESSION_XP);
-      return { ok: true, toast: `Сессия записана · ${v.weekSessions + 1}/${v.target} на неделе`, ...r };
+      const entry = {
+        id: L.uid(), opId: p.opId || null, sagaId: id, chapterId: v.current ? v.current.id : null, at: now(),
+        min: Math.min(min, 600), estimated: false, manual: true, typeId: p.typeId || null,
+        stepId: null, stepDone: false, note: (p.note || '').trim().slice(0, 280), wrapped: true,
+      };
+      s.sagaLog.push(entry);
+      if (p.typeId && v.types.some((t) => t.id === p.typeId)) g.lastTypeId = p.typeId;
+      let r = gain('saga-session', entry.id, `${g.title}: занятие ${entry.min} мин`, L.SAGA_SESSION_XP);
+      if (p.stepId && v.current) {
+        const st = v.current.steps.find((x) => x.id === p.stepId);
+        if (st) {
+          entry.stepId = st.id; entry.stepDone = true;
+          const rs = A.chapterToggleStep(id, v.current.id, st.id, true);
+          r = { ...r, levelUp: r.levelUp || rs.levelUp };
+        }
+      }
+      return { ok: true, toast: `Занятие записано · ${entry.min} мин · ${v.weekSessions + 1}/${v.target} на неделе`, ...r };
+    },
+
+    /** After a session: optionally tick the step that was done and keep a short note. */
+    sagaSessionWrap(logId, p = {}) {
+      const s = S();
+      const e = s.sagaLog.find((x) => x.id === logId);
+      if (!e) return { ok: false };
+      const g = findG(e.sagaId);
+      let r = {};
+      if (p.stepId && g) {
+        const ch = g.chapters.find((c) => (c.steps || []).some((st) => st.id === p.stepId));
+        if (ch) {
+          r = A.chapterToggleStep(g.id, ch.id, p.stepId, true);
+          e.stepId = p.stepId; e.stepDone = true;
+        }
+      }
+      if (typeof p.note === 'string') e.note = p.note.trim().slice(0, 280);
+      e.wrapped = true;
+      return { ok: true, toast: e.stepDone ? (r.toast || 'Шаг отмечен') : 'Сессия записана', levelUp: r.levelUp };
     },
 
     sagaToggleChapter(id, chId) {
-      const s = S();
       const g = findG(id);
       const ch = g && g.chapters.find((c) => c.id === chId);
       if (!ch) return { ok: false };

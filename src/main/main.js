@@ -261,7 +261,7 @@ function applyAutostart() {
 
 // ---------------------------------------------------------------- scheduler
 function notify(ev) {
-  lastAlert = { at: Date.now(), title: ev.title, body: ev.body, urgent: !!ev.urgent };
+  lastAlert = { at: Date.now(), title: ev.title, body: ev.body, urgent: !!ev.urgent, soft: !!ev.soft };
   if (Notification.isSupported()) {
     const n = new Notification({ title: ev.title, body: ev.body, icon: iconPath('icon.png'), urgency: ev.urgent ? 'critical' : 'normal', timeoutType: ev.urgent ? 'never' : 'default' });
     n.on('click', () => {

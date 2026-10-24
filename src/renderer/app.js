@@ -12,6 +12,7 @@ const ui = {
   expanded: {},           // section -> bool ("show more")
   openHabit: {},          // ritual id -> steps expanded
   openSaga: {},           // saga id -> chapters expanded
+  openHist: {},           // saga id -> history expanded
   pick: new Set(),        // briefing selection
   drawer: null,           // { type:'quest'|'habit', draft }
   askNext: null,          // quest id waiting for "what's the next step?"
@@ -181,6 +182,14 @@ function renderNext() {
           <button class="btn btn-good" type="button" data-a="questComplete" data-id="${n.id}">${icon('check', 16)}Квест готов</button>
         </form>
       </section>`;
+    }
+    if (v.active.sagaId) {
+      eyebrow = 'Сессия саги';
+      actions = `<button class="btn btn-primary" data-a="questComplete" data-id="${n.id}">${icon('check', 16)}Завершить сессию</button>
+        <button class="btn btn-ghost" data-a="questPause">${icon('pause', 16)}Пауза</button>`;
+      return `<section class="card next" aria-label="Следующее действие">
+        <div class="eyebrow">${esc(eyebrow)}</div><div class="action">${esc(n.action)}</div>
+        <div class="meta">${meta}</div><div class="hint">Время — ориентир. Можно закончить раньше.</div><div class="actions">${actions}</div></section>`;
     }
     actions = `
       <button class="btn btn-primary" data-a="stepDone" data-id="${n.id}">${icon('check', 16)}Шаг готов</button>
@@ -380,33 +389,98 @@ function weekDots(g) {
   return `<span class="dots" aria-label="Сессий на этой неделе: ${g.weekSessions} из ${g.target}">${h}</span>`;
 }
 
-function sessionBtn(g, small = false) {
-  if (g.status !== 'active') return '';
-  if (g.openActive) return `<button class="btn ${small ? 'btn-sm' : ''}" data-a="questPause">${icon('pause', 15)}Пауза</button>`;
-  return `<button class="btn btn-primary ${small ? 'btn-sm' : ''}" data-a="sagaStartSession" data-id="${g.id}">${icon('play', 15)}Сессия ~${fmtMin(g.sessionMin)}</button>`;
+function fmtAgo(days) {
+  if (days <= 0) return 'сегодня';
+  if (days === 1) return 'вчера';
+  return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`;
+}
+
+/** Buttons that start (or finish) a session. One click = the suggested step at the suggested length. */
+function sessionBtns(g, small = false) {
+  if (g.status === 'done') return '';
+  const sm = small ? 'btn-sm' : '';
+  if (g.openActive) {
+    return `<button class="btn btn-primary ${sm}" data-a="questComplete" data-id="${g.openQuestId}">${icon('check', 15)}Завершить сессию</button>
+      <button class="btn ${sm}" data-a="questPause">${icon('pause', 15)}Пауза</button>`;
+  }
+  return `<button class="btn btn-primary ${sm}" data-a="sagaQuickStart" data-id="${g.id}">${icon('play', 15)}Начать · ${fmtMin(g.suggestedMin)}</button>
+    <button class="btn ${small ? 'btn-ghost' : ''} ${sm}" data-a="sagaLaunch" data-id="${g.id}">Выбрать другое</button>`;
+}
+
+/** The "what can I do right now" block: chapter, criterion, one concrete action. */
+function sagaNow(g, compact = false) {
+  const ch = g.current;
+  if (!ch) return compact ? '' : `<div class="saga-now"><span class="faint">Все главы пройдены или глав нет — добавь главу в редакторе саги.</span></div>`;
+  const action = g.nextStep ? g.nextStep.text : `любое полезное действие по главе`;
+  return `<div class="saga-now">
+    <div class="saga-now-head"><span class="eyebrow">Глава ${g.doneCh + 1}/${g.totalCh} · ${esc(ch.title)}</span>${g.curStepsTotal ? `<span class="faint num">шаги ${g.curStepsDone}/${g.curStepsTotal}</span>` : ''}</div>
+    ${!compact && ch.criterion ? `<div class="saga-crit">${icon('flag', 13)}<span>Готово, когда: ${esc(ch.criterion)}</span></div>` : ''}
+    <div class="saga-today"><span class="muted">Сегодня:</span> <b>${esc(action)}</b></div>
+    ${!g.nextStep && !compact ? `<button class="btn btn-ghost btn-sm" style="align-self:flex-start" data-a="editChapter" data-id="${g.id}" data-sid="${ch.id}">${icon('plus', 14)}Разбить главу на маленькие шаги</button>` : ''}
+  </div>`;
+}
+
+function sagaBack(g) {
+  if (!g.isQuiet) return '';
+  return `<div class="saga-back">${icon('sunrise', 15)}<span>Последнее занятие ${fmtAgo(g.quietDays)}. Можно вернуться с 5 минут — без нового материала.</span></div>`;
 }
 
 function sagaCompact(g) {
-  return `<article class="card saga compact ${g.isQuiet ? 'quiet' : ''}">
+  return `<article class="card saga compact">
     <div class="saga-row">
       <span class="saga-ico" aria-hidden="true">${icon('swords', 18)}</span>
-      <div style="flex:1;min-width:0">
-        <div class="name">${esc(g.title)}</div>
-        <div class="when">${g.current ? `Глава ${g.doneCh + 1}/${g.totalCh}: ${esc(g.current.title)}` : 'Глав нет'}${g.isQuiet ? ` · молчит ${g.quietDays} дн.` : ''}</div>
-      </div>
+      <div style="flex:1;min-width:0"><div class="name">${esc(g.title)}</div>
+        <div class="when">${g.nextStep ? `Сегодня: ${esc(g.nextStep.text)}` : g.current ? `Глава: ${esc(g.current.title)}` : 'Глав нет'}</div></div>
       ${weekDots(g)}
     </div>
-    <div class="row-btns">${sessionBtn(g, true)}<button class="btn btn-ghost btn-sm" data-a="sagaLogSession" data-id="${g.id}" title="Сессия была вне приложения">${icon('plus', 14)}Отметить</button></div>
+    ${g.isQuiet ? `<div class="when">${icon('sunrise', 13, 'inline')} последнее занятие ${fmtAgo(g.quietDays)}</div>` : ''}
+    <div class="row-btns">${sessionBtns(g, true)}</div>
   </article>`;
+}
+
+function chapterList(g) {
+  return `<div class="chapters">${g.chapters.map((c, i) => {
+    const isCur = g.current && c.id === g.current.id;
+    const st = c.steps || [];
+    return `<div class="chapter ${c.done ? 'done' : ''} ${isCur ? 'cur' : ''}">
+      <div class="substep">
+        <button class="check" role="checkbox" aria-checked="${c.done}" aria-label="Глава ${i + 1} пройдена: ${esc(c.title)}" title="Глава пройдена" data-a="sagaToggleChapter" data-id="${g.id}" data-sid="${c.id}">${icon('check', 14)}</button>
+        <span class="ch-title">${i + 1}. ${esc(c.title)}</span>
+        ${st.length ? `<span class="faint num" style="font-size:12.5px">${st.filter((x) => x.done).length}/${st.length}</span>` : ''}
+        ${c.done ? '<span class="chip xp">+50 XP</span>' : ''}
+        <button class="btn btn-ghost icon-btn btn-sm" style="margin-left:auto" data-a="editChapter" data-id="${g.id}" data-sid="${c.id}" aria-label="План главы ${i + 1}">${icon('pencil', 14)}</button>
+      </div>
+      ${isCur && (c.criterion || st.length) ? `<div class="ch-plan">
+        ${c.goal ? `<div class="when">${esc(c.goal)}</div>` : ''}
+        ${c.criterion ? `<div class="saga-crit">${icon('flag', 13)}<span>Готово, когда: ${esc(c.criterion)}</span></div>` : ''}
+        ${st.map((x) => `<div class="substep step-row ${x.done ? 'done' : ''}">
+          <button class="check" role="checkbox" aria-checked="${!!x.done}" aria-label="Шаг: ${esc(x.text)}" data-a="chapterToggleStep" data-id="${g.id}" data-ch="${c.id}" data-sid="${x.id}">${icon('check', 13)}</button>
+          <span>${esc(x.text)}</span></div>`).join('')}
+      </div>` : ''}
+    </div>`;
+  }).join('') || '<div class="faint">Глав пока нет</div>'}</div>`;
+}
+
+function sagaHistory(g) {
+  const stats = g.typeStats.filter((t) => t.count);
+  return `<div class="saga-history">
+    ${stats.length ? `<div class="type-stats"><span class="faint">За 30 дней:</span>${stats.map((t) => `<span class="chip arcane">${esc(t.name)} · ${t.count}</span>`).join('')}</div>` : ''}
+    ${g.history.length ? g.history.map((h) => `<div class="hist">
+      <span class="t num">${new Date(h.at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>
+      <span class="num hist-min">${h.estimated ? '~' : ''}${fmtMin(h.min)}</span>
+      <span class="hist-body">${h.type ? `<span class="chip">${esc(h.type)}</span>` : ''}${h.step ? `<span class="hist-step">${icon('check', 13, 'inline')} ${esc(h.step)}</span>` : ''}${h.note ? `<span class="hist-note">«${esc(h.note)}»</span>` : ''}${!h.step && !h.note && !h.type ? '<span class="faint">занятие</span>' : ''}</span>
+    </div>`).join('') : '<div class="faint">Занятий пока не было.</div>'}
+  </div>`;
 }
 
 function sagaCard(g) {
   const open = ui.openSaga[g.id] ?? false;
-  const hours = g.totalMin >= 60 ? `${Math.floor(g.totalMin / 60)} ч ${g.totalMin % 60 ? `${g.totalMin % 60} мин` : ''}` : `${g.totalMin} мин`;
+  const hist = ui.openHist[g.id] ?? false;
+  const hours = g.totalMin >= 60 ? `${Math.floor(g.totalMin / 60)} ч${g.totalMin % 60 ? ` ${g.totalMin % 60} мин` : ''}` : `${g.totalMin} мин`;
   const statusChip = g.status === 'paused' ? `<span class="chip">${icon('pause', 13)}На паузе</span>`
     : g.status === 'done' ? `<span class="chip xp">${icon('crown', 13)}Завершена</span>`
-    : g.isQuiet ? `<span class="chip ember" title="Нет сессий ${g.quietDays} дн.">${icon('bell', 13)}Молчит ${g.quietDays} ${plural(g.quietDays, 'день', 'дня', 'дней')}</span>` : '';
-  return `<article class="card saga ${g.isQuiet ? 'quiet' : ''} ${g.status}">
+    : !g.remind ? `<span class="chip" title="Напоминания для этой саги выключены">${icon('bell', 13)}без напоминаний</span>` : '';
+  return `<article class="card saga ${g.status}">
     <div class="saga-row">
       <span class="saga-ico big" aria-hidden="true">${icon(g.status === 'done' ? 'crown' : 'swords', 22)}</span>
       <div style="flex:1;min-width:0">
@@ -416,26 +490,24 @@ function sagaCard(g) {
       ${statusChip}
       <button class="btn btn-ghost icon-btn btn-sm" data-a="editSaga" data-id="${g.id}" aria-label="Изменить сагу">${icon('pencil', 15)}</button>
     </div>
+    ${g.status === 'active' ? sagaBack(g) + sagaNow(g) : ''}
+    <div class="row-btns">
+      ${g.status === 'active' ? sessionBtns(g) : ''}
+      ${g.status === 'paused' ? `<button class="btn btn-primary" data-a="sagaPause" data-id="${g.id}">${icon('play', 15)}Продолжить сагу</button>` : ''}
+    </div>
     <div class="saga-progress">
       <div class="xpbar" role="progressbar" aria-label="Прогресс саги" aria-valuenow="${g.pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${g.pct}%"></i></div>
-      <div class="saga-meta num"><span>${g.doneCh}/${g.totalCh} ${plural(g.totalCh, 'глава', 'главы', 'глав')} · ${g.pct}%</span><span>${hours} · ${g.sessions} ${plural(g.sessions, 'сессия', 'сессии', 'сессий')}</span></div>
+      <div class="saga-meta num"><span>${g.doneCh}/${g.totalCh} ${plural(g.totalCh, 'глава', 'главы', 'глав')} · ${g.pct}%</span><span class="saga-week">Неделя ${weekDots(g)} ${g.weekSessions}/${g.target}</span><span>${hours} · ${g.sessions} ${plural(g.sessions, 'занятие', 'занятия', 'занятий')}</span></div>
     </div>
-    ${g.status === 'active' ? `<div class="saga-now">
-      <div><div class="eyebrow">Сейчас</div><div class="saga-step">${g.current ? `Глава ${g.doneCh + 1}: ${esc(g.current.title)}` : 'Добавь главы в редакторе'}</div></div>
-      <div class="saga-week"><span class="muted">Неделя</span>${weekDots(g)}<span class="num">${g.weekSessions}/${g.target}</span></div>
-    </div>` : ''}
     <div class="row-btns">
-      ${sessionBtn(g)}
-      ${g.status === 'active' ? `<button class="btn" data-a="sagaLogSession" data-id="${g.id}" title="Сессия была вне приложения">${icon('plus', 15)}Отметить сессию</button>` : ''}
-      <button class="btn btn-ghost" data-a="sagaExpand" data-id="${g.id}" aria-expanded="${open}">${icon(open ? 'chevron-down' : 'chevron-right', 15)}Главы</button>
+      <button class="btn btn-ghost btn-sm" data-a="sagaExpand" data-id="${g.id}" aria-expanded="${open}">${icon(open ? 'chevron-down' : 'chevron-right', 15)}Главы</button>
+      <button class="btn btn-ghost btn-sm" data-a="sagaHistory" data-id="${g.id}" aria-expanded="${hist}">${icon(hist ? 'chevron-down' : 'chevron-right', 15)}История</button>
       <span style="flex:1"></span>
-      ${g.status !== 'done' ? `<button class="btn btn-ghost btn-sm" data-a="sagaPause" data-id="${g.id}">${g.status === 'paused' ? 'Продолжить' : 'Пауза саги'}</button>` : ''}
+      ${g.status === 'active' ? `<button class="btn btn-ghost btn-sm" data-a="sagaLog" data-id="${g.id}" title="Занимался вне компьютера">${icon('plus', 14)}Отметить занятие</button>` : ''}
+      ${g.status === 'active' ? `<button class="btn btn-ghost btn-sm" data-a="sagaPause" data-id="${g.id}">Пауза саги</button>` : ''}
     </div>
-    ${open ? `<div class="substeps chapters">${g.chapters.map((c, i) => `
-      <div class="substep ${c.done ? 'done' : ''}">
-        <button class="check" role="checkbox" aria-checked="${c.done}" aria-label="Глава ${i + 1}: ${esc(c.title)}" data-a="sagaToggleChapter" data-id="${g.id}" data-sid="${c.id}">${icon('check', 14)}</button>
-        <span>${i + 1}. ${esc(c.title)}</span>${c.done ? '<span class="chip xp" style="margin-left:auto">+50 XP</span>' : ''}
-      </div>`).join('') || '<div class="faint">Глав пока нет</div>'}</div>` : ''}
+    ${open ? chapterList(g) : ''}
+    ${hist ? sagaHistory(g) : ''}
   </article>`;
 }
 
@@ -445,10 +517,10 @@ function renderSagas() {
   const done = v.sagas.filter((g) => g.status === 'done');
   return `<div class="page">
     <div class="page-head">
-      <div><h1>Саги</h1><p>Долгие цели: главы, сессии и ритм в неделю. Если сага замолчит — напомню с конкретным шагом.</p></div>
+      <div><h1>Саги</h1><p>Долгие цели. Карточка всегда показывает одно маленькое действие, с которого можно начать прямо сейчас.</p></div>
       <button class="btn btn-primary" data-a="newSaga">${icon('plus', 16)}Новая сага</button>
     </div>
-    <div class="list">${act.length ? act.map(sagaCard).join('') : `<div class="card empty">${icon('swords', 24)}<span>Сага — цель на недели: «Изучить Electron», «Подготовиться к CKA».<br>Разбей её на главы, выбери ритм — дальше по одной сессии.</span><button class="btn btn-primary btn-sm" data-a="newSaga">Начать сагу</button></div>`}</div>
+    <div class="list">${act.length ? act.map(sagaCard).join('') : `<div class="card empty">${icon('swords', 24)}<span>Сага — цель на недели: «Изучить Electron», «Японский».<br>Разбей её на главы, главы — на маленькие шаги. Дальше по одной сессии.</span><button class="btn btn-primary btn-sm" data-a="newSaga">Начать сагу</button></div>`}</div>
     ${done.length ? `<section class="section"><div class="eyebrow">Завершённые</div><div class="list">${done.map(sagaCard).join('')}</div></section>` : ''}
   </div>`;
 }
@@ -458,11 +530,42 @@ function openSagaEditor(id) {
   ui.drawer = {
     type: 'saga',
     draft: src
-      ? { ...JSON.parse(JSON.stringify(src)), steps: src.chapters.map((c) => ({ id: c.id, text: c.title })) }
-      : { title: '', why: '', area: 'life', targetPerWeek: 3, sessionMin: 30, quietDays: 5, steps: [{ text: '' }] },
+      ? { ...JSON.parse(JSON.stringify(src)), steps: src.chapters.map((c) => ({ id: c.id, text: c.title })), types: (src.sessionTypes || []).map((t) => ({ id: t.id, text: t.name })) }
+      : { title: '', why: '', area: 'life', targetPerWeek: 3, sessionMin: 30, quietDays: 5, remindEvery: 7, remind: true, steps: [{ text: '' }], types: [] },
   };
   renderDrawer();
   document.getElementById('d-title').focus();
+}
+
+function openChapterEditor(sagaId, chId) {
+  const g = sagaById(sagaId);
+  const c = g && g.chapters.find((x) => x.id === chId);
+  if (!c) return;
+  ui.drawer = { type: 'chapter', draft: { sagaId, id: c.id, title: c.title, goal: c.goal, criterion: c.criterion, steps: c.steps.map((x) => ({ id: x.id, text: x.text, done: x.done })) } };
+  renderDrawer();
+  const first = $drawer.querySelector('#d-crit');
+  if (first) first.focus();
+}
+
+function openLauncher(sagaId, type = 'session') {
+  const g = sagaById(sagaId);
+  if (!g) return;
+  ui.drawer = {
+    type,
+    draft: type === 'log'
+      ? { sagaId, min: null, typeId: g.lastTypeId, stepId: 'none', note: '', opId: Math.random().toString(36).slice(2) + Date.now().toString(36) }
+      : { sagaId, stepId: g.nextStep ? g.nextStep.id : 'none', min: g.suggestedMin, typeId: g.lastTypeId },
+  };
+  renderDrawer();
+}
+
+/** Called after any quest completion result: saga sessions get a short wrap-up. */
+function maybeWrap(r) {
+  const ss = r && r.sagaSession;
+  if (!ss) return;
+  const g = sagaById(ss.sagaId);
+  ui.drawer = { type: 'wrap', draft: { logId: ss.logId, sagaId: ss.sagaId, chapterId: g && g.current ? g.current.id : null, title: ss.title, min: ss.min, estimated: ss.estimated, plannedStepId: ss.stepId, stepId: ss.stepId || 'none', note: '' } };
+  renderDrawer();
 }
 
 // =====================================================================
@@ -588,15 +691,24 @@ function renderSettings() {
 // =====================================================================
 // Drawer editors
 // =====================================================================
-function stepsEditor(steps) {
-  return `<div class="steps-edit" id="steps-edit">${steps.map((s, i) => `
+function stepsEditor(list, key = 'steps', label = 'Шаг') {
+  return `<div class="steps-edit">${list.map((s, i) => `
     <div class="step-edit"><span class="idx num">${i + 1}.</span>
-      <input class="input" data-step="${i}" value="${esc(s.text)}" aria-label="Шаг ${i + 1}">
-      <button type="button" class="btn btn-ghost icon-btn btn-sm" data-d="rmStep" data-i="${i}" aria-label="Удалить шаг ${i + 1}">${icon('x', 15)}</button>
+      <input class="input" data-list="${key}" data-i="${i}" ${key === 'steps' ? `data-step="${i}"` : ''} value="${esc(s.text)}" aria-label="${label} ${i + 1}">
+      ${s.done ? `<span class="chip xp" title="Уже сделано">${icon('check', 12)}</span>` : ''}
+      <button type="button" class="btn btn-ghost icon-btn btn-sm" data-d="rmItem" data-list="${key}" data-i="${i}" aria-label="Удалить: ${label} ${i + 1}">${icon('x', 15)}</button>
     </div>`).join('')}
-    <button type="button" class="btn btn-ghost btn-sm" data-d="addStep" style="align-self:flex-start">${icon('plus', 15)}Шаг</button>
+    <button type="button" class="btn btn-ghost btn-sm" data-d="addItem" data-list="${key}" style="align-self:flex-start">${icon('plus', 15)}${label}</button>
   </div>`;
 }
+
+function pickOpt(key, value, selected, label, sub = '') {
+  return `<button type="button" class="pick-opt" aria-pressed="${selected}" data-d="sval" data-k="${key}" data-v="${esc(value)}">
+    <span class="check round" aria-hidden="true" aria-checked="${selected}">${icon('check', 13)}</span>
+    <span><span class="pick-label">${esc(label)}</span>${sub ? `<span class="pick-sub">${esc(sub)}</span>` : ''}</span></button>`;
+}
+
+function sagaById(id) { return P.view.sagas.find((x) => x.id === id); }
 
 function renderDrawer() {
   if (!ui.drawer) { $drawer.innerHTML = ''; return; }
@@ -633,12 +745,64 @@ function renderDrawer() {
       <div class="field"><span class="label">Сфера</span><div class="chips-row">
         <button type="button" class="toggle-chip" aria-pressed="${draft.area === 'work'}" data-d="area" data-v="work">Работа</button>
         <button type="button" class="toggle-chip" aria-pressed="${draft.area !== 'work'}" data-d="area" data-v="life">Жизнь</button></div></div>
-      <div class="field"><span class="label">Главы</span>${stepsEditor(draft.steps)}<span class="hint">Этапы по порядку. Глава = результат, который можно проверить. +50 XP за главу, +200 за всю сагу.</span></div>
+      <div class="field"><span class="label">Главы</span>${stepsEditor(draft.steps, 'steps', 'Глава')}<span class="hint">Этапы по порядку. Цель, критерий и шаги главы — карандашом в списке глав на карточке саги. +50 XP за главу, +200 за сагу.</span></div>
+      <div class="field"><span class="label">Типы занятий <span class="faint">· необязательно</span></span>${stepsEditor(draft.types, 'types', 'Тип')}<span class="hint">Например: «Новое», «Повторение», «Аудирование». Помогают разнообразить занятия.</span></div>
       <div class="field"><span class="label">Сессий в неделю</span><div class="chips-row">${chips('targetPerWeek', [1, 2, 3, 4, 5, 7], (x) => String(x))}</div></div>
-      <div class="field"><span class="label">Длина сессии</span><div class="chips-row">${chips('sessionMin', [15, 25, 30, 45, 60, 90], fmtMin)}</div><span class="hint">Сессия не занимает слот из лимита квестов дня.</span></div>
-      <div class="field"><span class="label">Напомнить, если молчит</span><div class="chips-row">${chips('quietDays', [3, 5, 7, 14], (x) => `${x} дн.`)}</div></div>`;
+      <div class="field"><span class="label">Обычная длина сессии</span><div class="chips-row">${chips('sessionMin', [15, 25, 30, 45, 60, 90], fmtMin)}</div><span class="hint">При старте всегда можно выбрать 5, 10 или 15 минут. Сессия не занимает слот из лимита квестов дня.</span></div>
+      <div class="set-row" style="grid-template-columns:1fr auto"><div class="desc"><b>Напоминать, если сага замолчала</b><span class="hint">Мягкое приглашение начать с 5 минут. Без штрафов.</span></div>
+        <button type="button" class="switch" role="switch" aria-checked="${draft.remind !== false}" aria-label="Напоминания саги" data-d="remindToggle"></button></div>
+      ${draft.remind !== false ? `<div class="field"><span class="label">Первое напоминание через</span><div class="chips-row">${chips('quietDays', [3, 5, 7, 14], (x) => `${x} дн.`)}</div></div>
+      <div class="field"><span class="label">Дальше — не чаще чем раз в</span><div class="chips-row">${chips('remindEvery', [3, 7, 14], (x) => `${x} дн.`)}</div></div>` : ''}`;
     foot = `${draft.id ? `<button class="btn btn-danger btn-ghost" data-d="sagaArchive">${icon('trash-2', 15)}Убрать</button>` : ''}<span class="spacer"></span>
       <button class="btn btn-ghost" data-d="close">Отмена</button><button class="btn btn-primary" data-d="save">Сохранить</button>`;
+  } else if (type === 'chapter') {
+    title = 'План главы';
+    body = `
+      <div class="field"><label for="d-title">Название</label><input class="input" id="d-title" value="${esc(draft.title)}"></div>
+      <div class="field"><label for="d-goal">Цель <span class="faint">· необязательно</span></label><input class="input" id="d-goal" value="${esc(draft.goal)}" placeholder="Зачем эта глава"></div>
+      <div class="field"><label for="d-crit">Критерий завершения</label><input class="input" id="d-crit" value="${esc(draft.criterion)}" placeholder="Как понять, что результат достигнут"><span class="hint">Например: «Провести 3 спокойных занятия».</span></div>
+      <div class="field"><span class="label">Шаги</span>${stepsEditor(draft.steps, 'steps', 'Шаг')}<span class="hint">Маленькие действия на 5–20 минут. Отмечаются независимо; главу закрываешь сам, когда выполнен критерий.</span></div>`;
+    foot = `<span class="spacer"></span><button class="btn btn-ghost" data-d="close">Отмена</button><button class="btn btn-primary" data-d="chapterSave">Сохранить</button>`;
+  } else if (type === 'session' || type === 'log') {
+    const g = sagaById(draft.sagaId);
+    const ch = g && g.current;
+    const steps = ch ? ch.steps.filter((st) => !st.done) : [];
+    const isLog = type === 'log';
+    title = isLog ? 'Отметить занятие' : 'Начать сессию';
+    const durs = isLog ? [5, 10, 15, 20, 30, 45, 60] : g.durations;
+    body = `
+      <div class="muted">${esc(g.title)}${ch ? ` · глава «${esc(ch.title)}»` : ''}</div>
+      ${isLog ? `<div class="field"><span class="label">Сколько длилось</span><div class="chips-row">
+          ${durs.map((m) => `<button type="button" class="toggle-chip" aria-pressed="${+draft.min === m}" data-d="sset" data-k="min" data-v="${m}">${fmtMin(m)}</button>`).join('')}
+          <input class="input num" style="width:90px" type="number" min="1" max="600" id="d-min" value="${draft.min && !durs.includes(+draft.min) ? draft.min : ''}" placeholder="мин" aria-label="Минут"></div></div>` : ''}
+      <div class="field"><span class="label">${isLog ? 'Какой шаг сделан' : 'Что делаем'}</span><div class="pick-list">
+        ${steps.map((st, i) => pickOpt('stepId', st.id, draft.stepId === st.id, st.text, !isLog && i === 0 ? 'следующий по плану' : '')).join('')}
+        ${pickOpt('stepId', 'none', draft.stepId === 'none' || (isLog && !draft.stepId), isLog ? 'Ни один, просто позанимался' : 'Без конкретного шага — просто позаниматься')}
+      </div>${ch && !ch.steps.length ? '<span class="hint">В главе пока нет шагов. Их можно добавить карандашом у главы.</span>' : ''}</div>
+      ${isLog ? '' : `<div class="field"><span class="label">Сколько</span><div class="chips-row">
+          ${durs.map((m) => `<button type="button" class="toggle-chip" aria-pressed="${+draft.min === m}" data-d="sset" data-k="min" data-v="${m}">${fmtMin(m)}${m === g.sessionMin ? ' · обычно' : ''}</button>`).join('')}</div>
+        <span class="hint">Это ориентир, а не таймер. Закончить можно раньше — запишется фактическое время.</span></div>`}
+      ${g.types.length ? `<div class="field"><span class="label">Тип занятия</span><div class="chips-row">
+        ${g.types.map((t) => `<button type="button" class="toggle-chip" aria-pressed="${draft.typeId === t.id}" data-d="sval" data-k="typeId" data-v="${t.id}">${esc(t.name)}</button>`).join('')}</div></div>` : ''}
+      ${isLog ? `<div class="field"><label for="d-note">Заметка <span class="faint">· необязательно</span></label><input class="input" id="d-note" value="${esc(draft.note)}" placeholder="Что получилось или что вспомнил" maxlength="280"></div>` : ''}`;
+    foot = `<span class="spacer"></span><button class="btn btn-ghost" data-d="close">Отмена</button>
+      <button class="btn btn-primary" data-d="${isLog ? 'logSave' : 'sessionStart'}">${icon(isLog ? 'check' : 'play', 16)}${isLog ? 'Записать' : `Начать · ${fmtMin(+draft.min)}`}</button>`;
+  } else if (type === 'wrap') {
+    const g = sagaById(draft.sagaId);
+    const ch = g && g.current;
+    const steps = ch ? ch.steps.filter((st) => !st.done) : [];
+    const ordered = [...steps.filter((st) => st.id === draft.plannedStepId), ...steps.filter((st) => st.id !== draft.plannedStepId)];
+    title = 'Сессия завершена';
+    body = `
+      <div class="wrap-sum"><b>${esc(draft.title)}</b><span class="num">${draft.estimated ? `~${fmtMin(draft.min)} · таймер не запускался` : fmtMin(draft.min)}</span></div>
+      ${ordered.length ? `<div class="field"><span class="label">Что получилось</span><div class="pick-list">
+        ${ordered.map((st) => pickOpt('stepId', st.id, draft.stepId === st.id, `Сделал: ${st.text}`, st.id === draft.plannedStepId ? 'было в плане' : '')).join('')}
+        ${pickOpt('stepId', 'none', !draft.stepId || draft.stepId === 'none', 'Просто занимался, без отметки шага')}
+      </div></div>` : ''}
+      <div class="field"><label for="d-note">Заметка <span class="faint">· необязательно</span></label><input class="input" id="d-note" value="${esc(draft.note)}" placeholder="Что получилось, что вспомнил, что было трудно" maxlength="280"></div>
+      ${ch && ch.criterion ? `<div class="saga-crit">${icon('flag', 13)}<span>Критерий главы «${esc(ch.title)}»: ${esc(ch.criterion)}</span></div>
+        <button type="button" class="toggle-chip" aria-pressed="${!!draft.chapterDone}" data-d="chapterDone">Критерий выполнен — глава пройдена</button>` : ''}`;
+    foot = `<span class="spacer"></span><button class="btn btn-ghost" data-d="wrapSkip">Пропустить</button><button class="btn btn-primary" data-d="wrapSave">Сохранить</button>`;
   } else {
     title = draft.id ? 'Ритуал' : 'Новый ритуал';
     const presets = [-60, -30, -15, 0, 15, 30, 60];
@@ -678,7 +842,11 @@ function readDrawerInputs() {
   if (g('d-notes') !== undefined) d.notes = g('d-notes');
   if (g('d-time') !== undefined) d.time = g('d-time') || null;
   if (g('d-why') !== undefined) d.why = g('d-why');
-  $drawer.querySelectorAll('[data-step]').forEach((el) => { d.steps[+el.dataset.step].text = el.value; });
+  if (g('d-goal') !== undefined) d.goal = g('d-goal');
+  if (g('d-crit') !== undefined) d.criterion = g('d-crit');
+  if (g('d-note') !== undefined) d.note = g('d-note');
+  if (g('d-min') !== undefined && g('d-min') !== '') d.min = +g('d-min');
+  $drawer.querySelectorAll('input[data-list]').forEach((el) => { d[el.dataset.list][+el.dataset.i].text = el.value; });
 }
 
 function openQuestEditor(q) {
@@ -718,8 +886,39 @@ $drawer.addEventListener('click', async (e) => {
     case 'noTime': d.time = null; d.hard = false; break;
     case 'rem': d.remind = d.remind.includes(+v) ? d.remind.filter((x) => x !== +v) : [...d.remind, +v]; break;
     case 'hard': d.hard = !d.hard; break;
-    case 'addStep': d.steps.push({ text: '' }); renderDrawer(); { const ins = $drawer.querySelectorAll('[data-step]'); ins[ins.length - 1].focus(); } return;
-    case 'rmStep': d.steps.splice(+t.dataset.i, 1); break;
+    case 'addItem': {
+      const key = t.dataset.list;
+      d[key].push({ text: '' }); renderDrawer();
+      const ins = $drawer.querySelectorAll(`input[data-list="${key}"]`); ins[ins.length - 1].focus(); return;
+    }
+    case 'rmItem': d[t.dataset.list].splice(+t.dataset.i, 1); break;
+    case 'sval': d[t.dataset.k] = v; break;
+    case 'remindToggle': d.remind = d.remind === false; break;
+    case 'chapterDone': d.chapterDone = !d.chapterDone; break;
+    case 'chapterSave': {
+      const r = await run('chapterSave', d.sagaId, d.id, { title: d.title, goal: d.goal, criterion: d.criterion, steps: d.steps });
+      if (r.ok) closeDrawer();
+      return;
+    }
+    case 'sessionStart': {
+      closeDrawer();
+      await run('sagaStartSession', d.sagaId, { stepId: d.stepId || 'none', min: d.min, typeId: d.typeId || null });
+      return;
+    }
+    case 'logSave': {
+      if (!(+d.min > 0)) { toast('Укажи, сколько минут длилось занятие', 'err'); return; }
+      const r = await run('sagaLogSession', d.sagaId, { min: d.min, typeId: d.typeId || null, stepId: d.stepId && d.stepId !== 'none' ? d.stepId : null, note: d.note, opId: d.opId });
+      if (r.ok) closeDrawer();
+      return;
+    }
+    case 'wrapSave': {
+      const stepId = d.stepId && d.stepId !== 'none' ? d.stepId : null;
+      closeDrawer();
+      await run('sagaSessionWrap', d.logId, { stepId, note: d.note || '' });
+      if (d.chapterDone && d.chapterId) await run('sagaToggleChapter', d.sagaId, d.chapterId);
+      return;
+    }
+    case 'wrapSkip': closeDrawer(); await qb.act('sagaSessionWrap', d.logId, {}); return;
     case 'delete': await run('questDelete', d.id); return closeDrawer();
     case 'archive': await run('habitArchive', d.id); return closeDrawer();
     case 'sagaArchive': await run('sagaArchive', d.id); return closeDrawer();
@@ -730,7 +929,7 @@ $drawer.addEventListener('click', async (e) => {
       if (ui.drawer.type === 'quest') {
         r = d.id ? await run('questUpdate', d.id, d) : await run('questAdd', { ...d, today: t.dataset.d === 'saveToday' });
       } else if (ui.drawer.type === 'saga') {
-        r = await run('sagaSave', { ...d, chapters: d.steps.map((x) => ({ id: x.id, title: x.text })) });
+        r = await run('sagaSave', { ...d, chapters: d.steps.map((x) => ({ id: x.id, title: x.text })), sessionTypes: d.types.map((x) => ({ id: x.id, name: x.text })) });
       } else r = await run('habitSave', d);
       if (r.ok) closeDrawer();
       return;
@@ -741,7 +940,7 @@ $drawer.addEventListener('click', async (e) => {
 });
 $drawer.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeDrawer();
-  if (e.key === 'Enter' && e.target.matches('[data-step]')) { e.preventDefault(); $drawer.querySelector('[data-d="addStep"]').click(); }
+  if (e.key === 'Enter' && e.target.matches('input[data-list]')) { e.preventDefault(); $drawer.querySelector(`[data-d="addItem"][data-list="${e.target.dataset.list}"]`).click(); }
 });
 
 // =====================================================================
@@ -780,8 +979,14 @@ document.addEventListener('click', async (e) => {
     case 'newSaga': openSagaEditor(null); break;
     case 'editSaga': openSagaEditor(id); break;
     case 'sagaExpand': ui.openSaga[id] = !ui.openSaga[id]; render(); break;
+    case 'sagaHistory': ui.openHist[id] = !ui.openHist[id]; render(); break;
     case 'sagaToggleChapter': await run(a, id, t.dataset.sid); break;
-    case 'sagaStartSession': case 'sagaLogSession': case 'sagaPause': await run(a, id); break;
+    case 'chapterToggleStep': await run(a, id, t.dataset.ch, t.dataset.sid); break;
+    case 'editChapter': openChapterEditor(id, t.dataset.sid); break;
+    case 'sagaQuickStart': await run('sagaStartSession', id); break;
+    case 'sagaLaunch': openLauncher(id, 'session'); break;
+    case 'sagaLog': openLauncher(id, 'log'); break;
+    case 'sagaPause': await run(a, id); break;
     case 'habitExpand': ui.openHabit[id] = !(ui.openHabit[id] ?? false); render(); break;
     case 'expand': ui.expanded[t.dataset.key] = !ui.expanded[t.dataset.key]; render(); break;
     case 'filter': ui.filter = t.dataset.key; render(); break;
@@ -812,7 +1017,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'questToggleStep': case 'habitToggleStep': await run(a, id, t.dataset.sid); break;
-    case 'questComplete': ui.askNext = null; await run(a, id); break;
+    case 'questComplete': { ui.askNext = null; const r = await run(a, id); maybeWrap(r); break; }
     case 'setToggle':
       if (t.dataset.key === 'hudEnabled') qb.ui('hudToggle');
       else await run('settingsUpdate', { [t.dataset.key]: !P.view.settings[t.dataset.key] });

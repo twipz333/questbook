@@ -3,6 +3,7 @@ import { qb, esc, icon, fmtMin, fmtUntil, applyTheme, run, patch } from './commo
 const $hud = document.getElementById('hud');
 let P = null;
 let askNext = null;
+let wrap = null; // saga session wrap-up: { logId, stepId, stepText, title, min }
 let flashUntil = 0;
 
 function bar(v) {
@@ -17,6 +18,23 @@ function bar(v) {
 }
 
 function nowSection(v) {
+  if (wrap) {
+    return `<div class="sec"><div class="lbl"><span>Сессия записана</span><span class="num">${wrap.estimated ? '~' : ''}${fmtMin(wrap.min)}</span></div>
+      ${wrap.stepId ? `<div class="now-quest">Шаг «${esc(wrap.stepText)}» сделан?</div>` : '<div class="now-quest">Короткая заметка (необязательно):</div>'}
+      <form class="ask" data-form="wrap"><input class="input" id="hud-note" placeholder="Что получилось" autocomplete="off" maxlength="280" aria-label="Заметка"></form>
+      <div class="row">${wrap.stepId ? `<button class="btn btn-primary" data-a="wrapYes">${icon('check', 14)}Да</button><button class="btn" data-a="wrapNo">Нет</button>` : `<button class="btn btn-primary" data-a="wrapNo">${icon('check', 14)}Готово</button>`}</div></div>`;
+  }
+  if (v.active && v.active.sagaId) {
+    const q = v.active;
+    return `<div class="sec">
+      <div class="lbl"><span>Сессия саги</span><span class="num" style="color:var(--ember)">${fmtMin(v.activeElapsedMin)} / ~${fmtMin(q.estimateMin || 0)}</span></div>
+      <div class="now-step">${esc(q.nextStep || q.title)}</div>
+      <div class="now-quest">${esc(q.title)}</div>
+      <div class="row">
+        <button class="btn btn-primary" data-a="complete" data-id="${q.id}">${icon('check', 14)}Завершить</button>
+        <button class="btn icon-btn" data-a="pause" title="Пауза" aria-label="Пауза">${icon('pause', 14)}</button>
+      </div></div>`;
+  }
   if (v.active) {
     const q = v.active;
     const step = q.nextStep || (q.steps.find((s) => !s.done) || {}).text;
@@ -66,14 +84,14 @@ function habitsSection(v) {
 }
 
 function sagasSection(v) {
-  const list = v.sagas.filter((g) => g.status === 'active').sort((a, b) => b.isQuiet - a.isQuiet || (a.weekSessions / a.target) - (b.weekSessions / b.target)).slice(0, 2);
+  const list = v.sagas.filter((g) => g.status === 'active' && !g.openActive).sort((a, b) => (a.weekSessions / a.target) - (b.weekSessions / b.target)).slice(0, 2);
   if (!list.length) return '';
   return `<div class="sec"><div class="lbl"><span>Саги</span><span>на неделе</span></div>
     ${list.map((g) => `<div class="hrow">
       <span style="color:var(--arcane)">${icon('swords', 15)}</span>
-      <span class="t" title="${esc(g.current ? g.current.title : g.title)}">${esc(g.title)}</span>
-      <span class="w num ${g.isQuiet ? 'hot' : ''}">${g.isQuiet ? `${g.quietDays} дн.` : `${g.weekSessions}/${g.target}`}</span>
-      ${g.openActive ? '' : `<button class="btn btn-sm" data-a="saga" data-id="${g.id}" aria-label="Сессия: ${esc(g.title)}" title="Сессия ~${g.sessionMin} мин">${icon('play', 12)}</button>`}
+      <span class="t" title="${esc(g.nextStep ? `${g.title}: ${g.nextStep.text}` : g.title)}">${esc(g.title)}</span>
+      <span class="w num">${g.weekSessions}/${g.target}</span>
+      ${g.openActive ? '' : `<button class="btn btn-sm" data-a="saga" data-id="${g.id}" aria-label="Сессия: ${esc(g.title)}" title="Начать ~${g.suggestedMin} мин: ${esc(g.nextStep ? g.nextStep.text : g.title)}">${icon('play', 12)}${g.suggestedMin}</button>`}
     </div>`).join('')}</div>`;
 }
 
@@ -81,7 +99,7 @@ function render() {
   if (!P) return;
   const v = P.view;
   applyTheme(v.settings);
-  $hud.classList.toggle('alerting', !!(P.alert && Date.now() < flashUntil));
+  $hud.classList.toggle('alerting', !!(P.alert && !P.alert.soft && Date.now() < flashUntil));
   if (v.settings.hudCollapsed) {
     const txt = v.active ? (v.active.nextStep || v.active.title) : (v.next ? v.next.action : '');
     const bed = v.bedtime && v.bedtime.minutesLeft <= 60 ? `${v.bedtime.title}: ${fmtUntil(v.bedtime.minutesLeft)}` : '';
@@ -94,7 +112,7 @@ function render() {
   } else {
     const al = P.alert;
     patch($hud, `${bar(v)}
-      ${al ? `<div class="alert" role="alert"><div><b>${esc(al.title)}</b><span>${esc(al.body)}</span></div><button class="ib" data-a="dismiss" aria-label="Скрыть напоминание">${icon('x', 14)}</button></div>` : ''}
+      ${al ? `<div class="alert ${al.soft ? 'soft' : ''}" role="${al.soft ? 'status' : 'alert'}"><div><b>${esc(al.title)}</b><span>${esc(al.body)}</span></div><button class="ib" data-a="dismiss" aria-label="Скрыть напоминание">${icon('x', 14)}</button></div>` : ''}
       ${nowSection(v)}
       ${habitsSection(v)}
       ${sagasSection(v)}
@@ -127,7 +145,24 @@ document.addEventListener('click', async (e) => {
     case 'dismiss': qb.ui('dismissAlert'); break;
     case 'start': await run('questStart', id); break;
     case 'pause': await run('questPause'); break;
-    case 'complete': askNext = null; await run('questComplete', id); break;
+    case 'complete': {
+      askNext = null;
+      const r = await run('questComplete', id);
+      if (r.sagaSession) {
+        wrap = { ...r.sagaSession };
+        if (P.view.settings.hudCollapsed) await qb.act('settingsUpdate', { hudCollapsed: false });
+        render();
+        setTimeout(() => document.getElementById('hud-note')?.focus(), 0);
+      }
+      break;
+    }
+    case 'wrapYes': case 'wrapNo': {
+      const w = wrap; wrap = null;
+      const note = (document.getElementById('hud-note') || {}).value || '';
+      await run('sagaSessionWrap', w.logId, { stepId: t.dataset.a === 'wrapYes' ? w.stepId : null, note });
+      render();
+      break;
+    }
     case 'step': {
       const r = await run('questStepDone', id);
       if (r.needNext) {
@@ -147,6 +182,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (e.target.dataset.form === 'wrap') { document.querySelector(wrap && wrap.stepId ? '[data-a="wrapYes"]' : '[data-a="wrapNo"]')?.click(); return; }
   const v = e.target.querySelector('input').value.trim();
   if (!v || !askNext) return;
   const id = askNext;

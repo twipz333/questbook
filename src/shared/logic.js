@@ -144,33 +144,92 @@ function parseCapture(text) {
 const CHAPTER_XP = 50;
 const SAGA_XP = 200;
 const SAGA_SESSION_XP = 10; // a session logged without a quest
+const SAGA_STEP_XP = 5;
+const SHORT_SESSIONS = [5, 10, 15];
 
 /** Monday of the week that contains `key`. */
 function weekStart(key) { return addDays(key, -((weekday(key) + 6) % 7)); }
+
+/** Normalise a chapter coming from older data (only id/title/done existed before 1.2). */
+function chapterOf(c) {
+  return {
+    ...c,
+    goal: c.goal || '',
+    criterion: c.criterion || '',
+    steps: Array.isArray(c.steps) ? c.steps : [],
+  };
+}
+
+/** Last moment the saga was touched: session, chapter or step done, creation, resume. */
+function sagaLastTouch(state, g) {
+  const log = (state.sagaLog || []).filter((e) => e.sagaId === g.id);
+  const chapters = (g.chapters || []).map(chapterOf);
+  const ts = [g.createdAt || 0, g.resumedAt || 0, ...log.map((e) => e.at),
+    ...chapters.map((c) => c.doneAt || 0),
+    ...chapters.flatMap((c) => c.steps.map((st) => st.doneAt || 0))];
+  return Math.max(...ts);
+}
 
 function sagaView(state, g, now = Date.now()) {
   const dsh = state.settings.dayStartHour;
   const today = dayKey(now, dsh);
   const ws = weekStart(today);
-  const log = (state.sagaLog || []).filter((e) => e.sagaId === g.id);
+  const log = (state.sagaLog || []).filter((e) => e.sagaId === g.id).sort((a, b) => b.at - a.at);
   const weekSessions = log.filter((e) => dayKey(e.at, dsh) >= ws).length;
   const totalMin = log.reduce((a, e) => a + (e.min || 0), 0);
-  const chapters = g.chapters || [];
+  const chapters = (g.chapters || []).map(chapterOf);
   const doneCh = chapters.filter((c) => c.done).length;
   const current = chapters.find((c) => !c.done) || null;
-  const touches = [g.createdAt || 0, ...log.map((e) => e.at), ...chapters.map((c) => c.doneAt || 0)];
-  const lastTouch = Math.max(...touches);
-  const quietDays = Math.floor((now - lastTouch) / DAY_MS);
+  const lastTouch = sagaLastTouch(state, g);
+  const quietDays = Math.max(0, Math.floor((now - lastTouch) / DAY_MS));
+  const status = g.status || 'active';
+  const quietLimit = g.quietDays || 5;
+  const isQuiet = status === 'active' && quietDays >= quietLimit;
   const open = state.quests.find((q) => q.sagaId === g.id && q.status !== 'done') || null;
+  const types = Array.isArray(g.sessionTypes) ? g.sessionTypes : [];
+  const typeName = (id) => (types.find((t) => t.id === id) || {}).name || '';
+  // what to do next: the first unfinished step of the current chapter
+  const nextStep = current ? current.steps.find((st) => !st.done) || null : null;
+  const sessionMin = g.sessionMin || 30;
+  // coming back after a pause -> suggest the smallest step in; otherwise the last chosen length
+  const suggestedMin = isQuiet ? 5 : (g.lastPlannedMin || sessionMin);
+  // type distribution over the last 30 days
+  const since = now - 30 * DAY_MS;
+  const typeStats = types.map((t) => ({ id: t.id, name: t.name, count: log.filter((e) => e.at >= since && e.typeId === t.id).length }));
+  const stepText = (e) => {
+    if (!e.stepId) return '';
+    for (const c of chapters) { const st = c.steps.find((x) => x.id === e.stepId); if (st) return st.text; }
+    return e.stepText || '';
+  };
+  const history = log.slice(0, 8).map((e) => ({
+    id: e.id, at: e.at, min: e.min || 0, estimated: !!e.estimated, note: e.note || '',
+    type: typeName(e.typeId), step: e.stepDone ? stepText(e) : '', wrapped: !!e.wrapped,
+    chapter: (chapters.find((c) => c.id === e.chapterId) || {}).title || '',
+  }));
   return {
-    id: g.id, title: g.title, why: g.why || '', area: g.area || 'life', status: g.status || 'active',
+    id: g.id, title: g.title, why: g.why || '', area: g.area || 'life', status,
     chapters, doneCh, totalCh: chapters.length,
     pct: chapters.length ? Math.round((doneCh / chapters.length) * 100) : 0,
-    current, weekSessions, target: g.targetPerWeek || 3, sessionMin: g.sessionMin || 30,
-    quietLimit: g.quietDays || 5, quietDays, isQuiet: (g.status || 'active') === 'active' && quietDays >= (g.quietDays || 5),
+    current, nextStep,
+    curStepsDone: current ? current.steps.filter((st) => st.done).length : 0,
+    curStepsTotal: current ? current.steps.length : 0,
+    weekSessions, target: g.targetPerWeek || 3, sessionMin, suggestedMin,
+    durations: [...new Set([...SHORT_SESSIONS, sessionMin])].sort((a, b) => a - b),
+    quietLimit, quietDays, isQuiet, lastTouch,
+    remind: g.remind !== false, remindEvery: g.remindEvery || 7,
+    types, lastTypeId: types.some((t) => t.id === g.lastTypeId) ? g.lastTypeId : (types[0] || {}).id || null,
+    typeStats, history,
     totalMin, sessions: log.length, openQuestId: open ? open.id : null, openActive: !!(open && state.activeQuestId === open.id),
     doneAt: g.doneAt || null,
   };
+}
+
+/** Should the scheduler nudge this saga now? First after quietDays, then every remindEvery days. */
+function sagaNudgeDue(g, view, now) {
+  if (view.status !== 'active' || !view.remind || !view.isQuiet) return false;
+  const last = g.lastNudgeAt || 0;
+  if (last < view.lastTouch) return true; // activity since the last nudge resets the cycle
+  return now - last >= view.remindEvery * DAY_MS;
 }
 
 // ---------- Default state ----------
@@ -297,7 +356,7 @@ const API = {
   uid, dayKey, addDays, weekday, timeInDay, parseHM, fmtHM,
   levelInfo, levelTitle, questXp, habitXp, STEP_XP,
   isScheduled, isDone, habitStreak, parseCapture, defaultState, buildView, plural, DAY_MS,
-  weekStart, sagaView, CHAPTER_XP, SAGA_XP, SAGA_SESSION_XP,
+  weekStart, sagaView, sagaNudgeDue, chapterOf, CHAPTER_XP, SAGA_XP, SAGA_SESSION_XP, SAGA_STEP_XP,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.QBLogic = API;

@@ -37,11 +37,17 @@ const done = A.questAdd({ title: 'Обновить зависимости Helm-�
 A.questComplete(done);
 s.log.forEach((e) => { if (e.at > now - 86400000 && e.at < now) e.at = Math.min(e.at, now); });
 s.habits[0].time = (() => { const d = new Date(now + 40 * 60000); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; })();
-A.sagaSave({ title: 'Изучить Electron', why: 'Собирать свои десктоп-утилиты', area: 'life', targetPerWeek: 3, sessionMin: 30, chapters: [{ title: 'Официальный tutorial' }, { title: 'IPC и preload' }, { title: 'Мини-приложение' }, { title: 'Упаковка и автообновление' }] });
-const g = s.sagas[0]; g.createdAt = now - 20 * 86400000; g.chapters[0].done = true; g.chapters[0].doneAt = now - 9 * 86400000;
-for (const d of [12, 10, 9, 2]) s.sagaLog.push({ id: 'sl' + d, sagaId: g.id, at: now - d * 86400000 + 3600000, min: 35 });
-A.sagaSave({ title: 'Подготовиться к CKA', area: 'work', targetPerWeek: 2, sessionMin: 45, quietDays: 5, chapters: [{ title: 'Networking' }, { title: 'Troubleshooting' }] });
-s.sagas[1].createdAt = now - 8 * 86400000;
+A.sagaSave({ title: 'Япония 2.0', why: 'Понимать игры и аниме без субтитров', area: 'life', targetPerWeek: 3, sessionMin: 30,
+  chapters: [{ title: 'Возвращение' }, { title: 'Кана без подсказок' }, { title: 'Первые 300 слов' }],
+  sessionTypes: [{ name: 'Игра' }, { name: 'Повторение' }, { name: 'Аудирование' }] });
+const g = s.sagas[0]; g.createdAt = now - 30 * 86400000;
+A.chapterSave(g.id, g.chapters[0].id, { title: 'Возвращение', goal: 'Вернуться без перегруза', criterion: 'Провести 3 спокойных занятия с Wagotabi',
+  steps: [{ text: 'Открыть Wagotabi и вспомнить управление' }, { text: 'Повторить знакомый материал 15 минут' }, { text: 'Ещё одно занятие без нового материала' }] });
+g.chapters[0].steps[0].done = true; g.chapters[0].steps[0].doneAt = now - 15 * 86400000;
+s.sagaLog.push({ id: 'sl1', sagaId: g.id, chapterId: g.chapters[0].id, at: now - 15 * 86400000, min: 12, typeId: g.sessionTypes[0].id, stepId: g.chapters[0].steps[0].id, stepDone: true, note: 'вспомнил меню и сохранения', wrapped: true });
+s.sagaLog.push({ id: 'sl2', sagaId: g.id, chapterId: g.chapters[0].id, at: now - 17 * 86400000, min: 25, typeId: g.sessionTypes[2].id, note: '', wrapped: true });
+A.sagaSave({ title: 'Изучить Electron', area: 'work', targetPerWeek: 2, sessionMin: 45, chapters: [{ title: 'Tutorial' }, { title: 'IPC и preload' }] });
+s.sagas[1].createdAt = now - 3 * 86400000;
 s.settings.hudBounds = { x: 1600 - 328, y: 1000 - 300, width: 328, height: 300 };
 fs.writeFileSync(path.join(ud, 'questbook.json'), JSON.stringify(s));
 
@@ -58,7 +64,16 @@ app.whenReady().then(async () => {
     main.webContents.send('nav', page); await wait(600); await cap(main, 'main-' + page);
   }
   main.webContents.send('nav', 'sagas'); await wait(300);
-  await main.webContents.executeJavaScript("document.querySelector('[data-a=\"sagaExpand\"]').click()"); await wait(300); await cap(main, 'main-sagas-open');
+  await main.webContents.executeJavaScript("document.querySelector('[data-a=\"sagaExpand\"]').click(); document.querySelector('[data-a=\"sagaHistory\"]').click()"); await wait(300); await cap(main, 'main-sagas-open');
+  await main.webContents.executeJavaScript("document.querySelector('[data-a=\"sagaLaunch\"]').click()"); await wait(400); await cap(main, 'main-launcher');
+  await main.webContents.executeJavaScript("document.querySelector('[data-d=\"close\"]').click()");
+  await main.webContents.executeJavaScript("document.querySelector('[data-a=\"editChapter\"]').click()"); await wait(400); await cap(main, 'main-chapter');
+  await main.webContents.executeJavaScript("document.querySelector('[data-d=\"close\"]').click()");
+  await main.webContents.executeJavaScript("document.querySelector('[data-a=\"sagaQuickStart\"]').click()"); await wait(500);
+  main.webContents.send('nav', 'today'); await wait(400); await cap(main, 'main-today-session');
+  await main.webContents.executeJavaScript("document.querySelector('.next [data-a=\"questComplete\"]').click()"); await wait(600); await cap(main, 'main-wrap');
+  await main.webContents.executeJavaScript("document.querySelector('[data-d=\"wrapSkip\"]').click()"); await wait(200);
+  main.webContents.send('nav', 'sagas'); await wait(300);
   await main.webContents.executeJavaScript("document.querySelector('[data-a=\"editSaga\"]').click()"); await wait(400); await cap(main, 'main-edit-saga');
   await main.webContents.executeJavaScript("document.querySelector('[data-d=\"close\"]').click()");
   main.webContents.send('nav', 'book'); await wait(300);
