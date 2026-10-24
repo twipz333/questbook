@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+  <title>Questbook HUD</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="themes.css">
+  <style>
+    html, body { background: transparent !important; overflow: hidden; }
+    body { padding: 8px; font-size: 14px; user-select: none; }
+    .hud { background: color-mix(in srgb, var(--surface) 96%, transparent); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); overflow: hidden; }
+    body.dock-bottom { padding-bottom: 0; }
+    body.dock-bottom .hud { border-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; box-shadow: 0 -4px 14px rgba(0,0,0,.35); }
+    body.dock-right { padding-right: 0; }
+    body.dock-right .hud { border-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .hud.alerting { border-color: var(--ember); animation: pulse-ring 1.6s var(--ease) 3; }
+    .bar { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px; -webkit-app-region: drag; border-bottom: 1px solid var(--border); }
+    .bar .lvl { width: 26px; height: 26px; position: relative; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--on-gold); flex: none; }
+    .bar .lvl::before { content: ''; position: absolute; inset: 3px; transform: rotate(45deg); background: var(--gold); border-radius: 4px; }
+    .bar .lvl span { position: relative; }
+    .bar .xp { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .bar .xp small { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+    .bar .xpbar { height: 4px; }
+    .bar button { -webkit-app-region: no-drag; }
+    .ib { width: 28px; height: 28px; border-radius: 7px; border: 0; background: transparent; color: var(--text-muted); display: grid; place-items: center; cursor: pointer; flex: none; transition: background var(--dur-fast), color var(--dur-fast); }
+    .ib:hover { background: var(--surface-3); color: var(--text); }
+    .sec { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+    .sec + .sec { border-top: 1px solid var(--border); }
+    .lbl { font-family: var(--font-display); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); display: flex; justify-content: space-between; }
+    .now-step { font-weight: 650; font-size: 15.5px; line-height: 1.3; overflow-wrap: anywhere; }
+    .now-quest { font-size: 12.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+    .row { display: flex; gap: 6px; }
+    .row .btn { flex: 1; min-height: 32px; font-size: 13px; padding: 0 8px; }
+    .row .btn.icon-btn { flex: none; width: 34px; }
+    .qrow { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+    .qrow .t { flex: 1; min-width: 0; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .qrow .n { font-family: var(--font-display); color: var(--gold); width: 14px; }
+    .hrow { display: flex; align-items: center; gap: 9px; min-height: 30px; }
+    .hrow .check { width: 22px; height: 22px; }
+    .hrow .t { flex: 1; min-width: 0; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hrow.done .t { color: var(--text-faint); text-decoration: line-through; }
+    .hrow .w { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    .hrow .w.hot { color: var(--ember); font-weight: 650; }
+    .hrow .s { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--ember); font-weight: 650; }
+    .alert { margin: 8px 10px 0; padding: 8px 10px; border-radius: 8px; background: var(--ember-soft); border-left: 3px solid var(--ember); display: flex; gap: 8px; }
+    .alert b { display: block; font-size: 13px; }
+    .alert span { font-size: 12.5px; color: var(--text-muted); }
+    .alert .ib { width: 22px; height: 22px; margin-left: auto; }
+    .foot { padding: 7px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; }
+    .foot b { color: var(--xp); }
+    .mini { display: flex; align-items: center; gap: 8px; padding: 8px; -webkit-app-region: drag; }
+    .mini .txt { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mini .tm { font-size: 12px; color: var(--ember); white-space: nowrap; }
+    .mini button { -webkit-app-region: no-drag; }
+    .ask { display: flex; gap: 6px; }
+    .ask .input { min-height: 32px; font-size: 13px; padding: 4px 8px; }
+    .empty-line { font-size: 13px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="hud" id="hud"></div>
+  <script src="../shared/logic.js"></script>
+  <script type="module" src="hud.js"></script>
+</body>
+</html>

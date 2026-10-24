@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Questbook</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="themes.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="titlebar"><span class="display">Questbook</span></div>
+  <div class="shell">
+    <aside class="rail" id="rail"></aside>
+    <main class="content" id="content" tabindex="-1"></main>
+  </div>
+  <div id="drawer-root"></div>
+  <script src="../shared/logic.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

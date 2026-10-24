@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+  <title>Новый квест</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="themes.css">
+  <style>
+    html, body { background: transparent !important; overflow: hidden; }
+    body { padding: 12px; }
+    .box { background: var(--surface); border: 1px solid var(--gold); border-radius: 14px; box-shadow: 0 10px 28px rgba(0,0,0,.5); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .head { display: flex; align-items: center; gap: 10px; }
+    .head .eyebrow { flex: 1; }
+    .big { width: 100%; height: 48px; font-size: 18px; padding: 0 14px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border-strong); outline: none; }
+    .big:focus { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+    .preview { display: flex; gap: 6px; flex-wrap: wrap; min-height: 24px; }
+    .keys { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-faint); }
+    .keys code { font-family: var(--font-body); color: var(--gold); background: var(--gold-soft); padding: 1px 5px; border-radius: 4px; }
+    .kbd { font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border-strong); color: var(--text-muted); }
+    .saved { color: var(--xp); font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="box" id="box"></div>
+  <script src="../shared/logic.js"></script>
+  <script type="module" src="capture.js"></script>
+</body>
+</html>

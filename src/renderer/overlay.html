@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+  <title>Questbook</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="themes.css">
+  <style>
+    html, body { background: transparent !important; overflow: hidden; }
+    body { display: grid; place-items: center; height: 100vh; background: rgba(8, 6, 14, .9) !important; }
+    :root[data-theme="light"] body { background: rgba(40, 30, 15, .82) !important; }
+    .panel { width: min(560px, 92vw); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 18px; padding: 32px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 30px 80px rgba(0,0,0,.6); animation: rise var(--dur-slow) var(--ease); }
+    @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+    .moon { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--arcane-soft); color: var(--arcane); }
+    .head { display: flex; gap: 16px; align-items: center; }
+    h1 { font-size: 30px; }
+    .sub { color: var(--text-muted); margin: 0; }
+    .steps { display: flex; flex-direction: column; gap: 10px; }
+    .st { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); font-size: 16px; }
+    .st.cur { border-color: var(--gold); background: var(--gold-soft); font-weight: 650; }
+    .st.done { color: var(--text-faint); text-decoration: line-through; }
+    .st .check { width: 28px; height: 28px; }
+    .acts { display: flex; gap: 10px; flex-wrap: wrap; }
+    .acts .btn { min-height: 46px; font-size: 15px; }
+    .acts .btn-primary { flex: 1; }
+    .prog { font-size: 13px; color: var(--text-muted); }
+    .bye { text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; padding: 20px 0; }
+    .bye b { font-family: var(--font-display); font-size: 28px; }
+  </style>
+</head>
+<body>
+  <div class="panel" id="panel" role="alertdialog" aria-modal="true" aria-labelledby="ov-title"></div>
+  <script src="../shared/logic.js"></script>
+  <script type="module" src="overlay.js"></script>
+</body>
+</html>
