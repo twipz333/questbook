@@ -221,3 +221,14 @@ body { overflow: hidden; }
 .wrap-sum { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--xp-soft); }
 .wrap-sum span { color: var(--xp); font-weight: 600; }
 .ico.inline { display: inline; vertical-align: -2px; }
+
+/* ---------- Deadlines & links ---------- */
+.due-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; border-color: color-mix(in srgb, var(--gold) 45%, var(--border)); }
+.due-row { display: flex; align-items: center; gap: 8px; }
+.due-row .t { flex: 1; min-width: 0; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.links { display: flex; gap: 6px; flex-wrap: wrap; }
+.link-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--sky); font-size: 12.5px; font-weight: 550; cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
+.link-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-chip:hover { border-color: var(--sky); background: var(--surface-3); }
+.link-chip .ico:last-child { opacity: .6; }
+.link-edit .input[data-f="title"] { flex: 0 0 34%; }

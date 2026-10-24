@@ -115,27 +115,105 @@ function lastScheduledBefore(h, todayKey) {
   return null;
 }
 
+// ---------- Deadlines ----------
+const WD_TOKENS = { 'пн': 1, 'вт': 2, 'ср': 3, 'чт': 4, 'пт': 5, 'сб': 6, 'вс': 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0 };
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const WD_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+function daysBetween(fromKey, toKey) { return Math.round((keyToDate(toKey) - keyToDate(fromKey)) / DAY_MS); }
+
+/** "сегодня" | "завтра" | "пт" | "25.10" | "25.10.2026" -> logical day key (or null). */
+function resolveDayToken(tok, todayKey) {
+  const w = tok.toLowerCase();
+  if (['сегодня', 'today', 'сейчас', 'now'].includes(w)) return todayKey;
+  if (['завтра', 'tomorrow'].includes(w)) return addDays(todayKey, 1);
+  if (w === 'послезавтра') return addDays(todayKey, 2);
+  if (w in WD_TOKENS) return addDays(todayKey, (WD_TOKENS[w] - weekday(todayKey) + 7) % 7);
+  const m = w.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2}|\d{4}))?$/);
+  if (!m) return null;
+  const d = +m[1], mo = +m[2];
+  let y = m[3] ? +m[3] : keyToDate(todayKey).getFullYear();
+  if (m[3] && m[3].length === 2) y += 2000;
+  const dt = new Date(y, mo - 1, d, 12);
+  if (dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null; // 31.02 etc
+  let key = `${y}-${pad(mo)}-${pad(d)}`;
+  if (!m[3] && key < todayKey) key = `${y + 1}-${pad(mo)}-${pad(d)}`; // "@05.01" in December = next year
+  return key;
+}
+
+/** Human label for a quest deadline. */
+function dueInfo(q, now = Date.now(), dayStartHour = 4) {
+  if (!q || !q.dueDay) return null;
+  const today = dayKey(now, dayStartHour);
+  const diff = daysBetween(today, q.dueDay);
+  const ts = q.dueTime ? timeInDay(q.dueDay, q.dueTime, dayStartHour) : null;
+  const overdue = diff < 0 || (ts !== null && now > ts);
+  let day;
+  if (diff === 0) day = 'сегодня';
+  else if (diff === 1) day = 'завтра';
+  else if (diff === 2) day = 'послезавтра';
+  else if (diff > 2 && diff < 7) day = WD_SHORT[weekday(q.dueDay)];
+  else { const d = keyToDate(q.dueDay); day = `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`; }
+  let label = q.dueTime ? `${day} до ${q.dueTime}` : `до ${day === 'сегодня' ? 'конца дня' : day}`;
+  if (diff < 0) label = `просрочен на ${-diff} ${plural(-diff, 'день', 'дня', 'дней')}`;
+  else if (overdue) label = `просрочен · был до ${q.dueTime}`;
+  const minutesLeft = ts !== null ? Math.round((ts - now) / 60000) : null;
+  return { label, overdue, isToday: diff === 0, diff, ts, minutesLeft, sortKey: ts || (keyToDate(q.dueDay).getTime() + 12 * 3600000) };
+}
+
+/** Keep only http(s) links; add https:// to "example.com/…"; title falls back to the host. */
+function cleanLinks(list) {
+  const out = [];
+  for (const l of list || []) {
+    let url = String((l && l.url) || '').trim();
+    if (!url) continue;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
+    let host;
+    try { const u = new URL(url); if (u.protocol !== 'http:' && u.protocol !== 'https:') continue; host = u.hostname.replace(/^www\./, ''); url = u.href; } catch (_) { continue; }
+    out.push({ title: String(l.title || '').trim().slice(0, 80), url, host });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 // ---------- Quick capture parsing ----------
 /**
- * "Починить алерты ~30 !  #работа @сегодня"
- *   ~30 | 30м | 2ч  -> estimate
- *   !               -> main quest
- *   #работа/#work   -> area work; #жизнь/#life/#дом -> life
- *   @сегодня/@today -> put into today
- *   > next step text (after ">")
+ * "Починить алерты ~30 ! #работа @завтра 22:00 > открыть дашборд"
+ *   ~30 | 30м | 2ч             -> estimate
+ *   !                          -> main quest
+ *   #работа/#work              -> area work (default is life); #жизнь/#дом -> life
+ *   @сегодня                   -> into today's plan (+ due today)
+ *   @завтра @послезавтра @пт @25.10 @25.10.2026 -> deadline day
+ *   22:00 | до 22:00 | @22:00  -> deadline time (today if no day given)
+ *   > text                     -> first step
+ *   [text](https://…) or a bare https://… -> attached link
  */
-function parseCapture(text) {
+function parseCapture(text, now = Date.now(), dayStartHour = 4) {
   let t = ' ' + text.trim() + ' ';
-  const out = { title: '', estimateMin: null, kind: 'side', area: null, today: false, nextStep: '' };
+  const out = { title: '', estimateMin: null, kind: 'side', area: null, today: false, nextStep: '', dueDay: null, dueTime: null, links: [] };
+  // links first: URLs contain ':' and digits that would look like a time or a date
+  t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/giu, (_, title, url) => { out.links.push({ title: title.trim(), url }); return title; });
+  t = t.replace(/\s(https?:\/\/\S+)(?=\s)/giu, (_, url) => { out.links.push({ title: '', url }); return ' '; });
   const ns = t.indexOf('>');
   if (ns >= 0) { out.nextStep = t.slice(ns + 1).trim(); t = t.slice(0, ns) + ' '; }
+  const todayKey = dayKey(now, dayStartHour);
+  // time first, so "@25.10 22:00" and "до 22:00" both work
+  t = t.replace(/\s@?(?:до\s+)?([01]?\d|2[0-3]):([0-5]\d)(?=\s)/iu, (_, h, m) => { out.dueTime = `${pad(+h)}:${m}`; return ' '; });
+  t = t.replace(/\s@(сегодня|today|сейчас|now|послезавтра|завтра|tomorrow|пн|вт|ср|чт|пт|сб|вс|mon|tue|wed|thu|fri|sat|sun|\d{1,2}\.\d{1,2}(?:\.\d{4}|\.\d{2})?)(?=\s)/iu, (all, w) => {
+    const key = resolveDayToken(w, todayKey);
+    if (!key) return all;
+    out.dueDay = key; return ' ';
+  });
   t = t.replace(/\s~?(\d{1,3})\s?(мин|м|min|m)(?=\s)/iu, (_, n) => { out.estimateMin = +n; return ' '; });
   t = t.replace(/\s~?(\d{1,2}(?:[.,]\d)?)\s?(ч|h)(?=\s)/iu, (_, n) => { out.estimateMin = Math.round(parseFloat(n.replace(',', '.')) * 60); return ' '; });
   t = t.replace(/\s~(\d{1,3})(?=\s)/u, (_, n) => { out.estimateMin = +n; return ' '; });
   t = t.replace(/\s!(?=\s)/u, () => { out.kind = 'main'; return ' '; });
   t = t.replace(/\s#(работа|work|раб)(?=\s)/iu, () => { out.area = 'work'; return ' '; });
   t = t.replace(/\s#(жизнь|life|дом|home|личное)(?=\s)/iu, () => { out.area = 'life'; return ' '; });
-  t = t.replace(/\s@(сегодня|today|сейчас|now)(?=\s)/iu, () => { out.today = true; return ' '; });
+  if (out.dueTime && !out.dueDay) out.dueDay = todayKey;
+  out.today = out.dueDay === todayKey;
+  // plain "@сегодня" means "into today's plan", not a deadline; with a time it is both
+  if (out.today && !out.dueTime) out.dueDay = null;
   out.title = t.replace(/\s+/g, ' ').trim();
   return out;
 }
@@ -289,8 +367,11 @@ function buildView(state, now = Date.now()) {
   const lvl = levelInfo(state.player.xp);
   const active = state.quests.find((q) => q.id === state.activeQuestId) || null;
 
-  const todayQuests = state.quests.filter((q) => q.status === 'today');
+  const byDue = (a, b) => ((dueInfo(a, now, s.dayStartHour) || { sortKey: 9e15 }).sortKey) - ((dueInfo(b, now, s.dayStartHour) || { sortKey: 9e15 }).sortKey);
+  const todayQuests = state.quests.filter((q) => q.status === 'today').sort(byDue);
   const inbox = state.quests.filter((q) => q.status === 'inbox');
+  // deadline today or already passed, but not in today's plan yet
+  const dueSoon = inbox.filter((q) => q.dueDay && q.dueDay <= today).sort(byDue);
   const doneToday = state.quests.filter((q) => q.status === 'done' && q.doneDay === today);
 
   const habits = state.habits.filter((h) => !h.archived).map((h) => {
@@ -335,7 +416,7 @@ function buildView(state, now = Date.now()) {
   return {
     now, today, level: { ...lvl, title: levelTitle(lvl.level) },
     active, activeElapsedMin, next,
-    todayQuests, inbox, doneToday,
+    todayQuests, inbox, doneToday, dueSoon,
     habits, todayHabits,
     habitsDone: todayHabits.filter((h) => h.done).length,
     xpToday,
@@ -355,7 +436,7 @@ function plural(n, one, few, many) {
 const API = {
   uid, dayKey, addDays, weekday, timeInDay, parseHM, fmtHM,
   levelInfo, levelTitle, questXp, habitXp, STEP_XP,
-  isScheduled, isDone, habitStreak, parseCapture, defaultState, buildView, plural, DAY_MS,
+  isScheduled, isDone, habitStreak, parseCapture, dueInfo, cleanLinks, resolveDayToken, daysBetween, defaultState, buildView, plural, DAY_MS,
   weekStart, sagaView, sagaNudgeDue, chapterOf, CHAPTER_XP, SAGA_XP, SAGA_SESSION_XP, SAGA_STEP_XP,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;

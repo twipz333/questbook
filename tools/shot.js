@@ -28,6 +28,9 @@ A.questCapture('Ответить на ревью PR ~20 @сегодня');
 A.questAdd({ title: 'Записаться к стоматологу', area: 'life', estimateMin: 5, nextStep: 'Найти номер клиники' });
 A.questAdd({ title: 'Разобрать runbook по ротации сертификатов', estimateMin: 90, steps: [{ text: 'Собрать текущие шаги' }, { text: 'Проверить на стейдже' }, { text: 'Обновить в вики' }] });
 A.questAdd({ title: 'Продлить домен', area: 'life', estimateMin: 10 });
+A.questCapture('Купить [тумбочку](https://example.com/tumba) @завтра до 20:00 ~30 > сравнить размеры');
+A.questUpdate(s.quests[0].id, { links: [...s.quests[0].links, { title: 'Отзывы', url: 'https://example.org/reviews' }] });
+A.questAdd({ title: 'Оплатить интернет', area: 'life', estimateMin: 5, dueDay: L.addDays(L.dayKey(now), -1) });
 const q1 = s.quests.find((q) => q.title.startsWith('Починить'));
 q1.steps = [{ id: 'a', text: 'Открыть дашборд с ошибками', done: true }, { id: 'b', text: 'Найти маршрут с ростом 5xx', done: false }, { id: 'c', text: 'Поправить таймаут и выкатить', done: false }];
 q1.nextStep = 'Найти маршрут с ростом 5xx';
@@ -88,7 +91,7 @@ app.whenReady().then(async () => {
   qb.store.state.settings.hudCollapsed = false; qb.broadcast();
   qb.showCapture(); await wait(800);
   const c = byTitle('Новый квест');
-  await c.webContents.executeJavaScript("const i=document.getElementById('cap'); i.value='Подготовить демо для команды ~30 ! @сегодня > набросать план'; i.dispatchEvent(new Event('input'))");
+  await c.webContents.executeJavaScript("const i=document.getElementById('cap'); i.value='Купить [тумбочку](https://example.com/t) #работа @завтра до 20:00 ~30 > сравнить размеры'; i.dispatchEvent(new Event('input'))");
   await wait(300); await cap(c, 'capture');
   qb.showOverlay(qb.store.state.habits[0].id); await wait(1500);
   const ov = BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Questbook' && w !== main);

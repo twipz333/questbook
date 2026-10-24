@@ -64,6 +64,26 @@ function tick(state, ctx) {
       : { kind: 'notify', title: 'Нет активного квеста', body: 'Выбери один квест на ближайший час. Ctrl+Alt+Q — записать новый.', open: 'hud' });
   }
 
+  // 3b) Deadlines with a time: an hour before and when it's due
+  for (const q of state.quests) {
+    if (q.status === 'done' || !q.dueDay || !q.dueTime) continue;
+    const info = L.dueInfo(q, now, s.dayStartHour);
+    if (!info || info.ts === null) continue;
+    for (const off of [-60, 0]) {
+      const at = info.ts + off * 60000;
+      const key = `${today}|due|${q.id}|${off}`;
+      if (now >= at && now < at + 15 * 60000 && !state.fired[key]) {
+        state.fired[key] = 1;
+        events.push({
+          kind: 'notify',
+          title: off < 0 ? `Через час срок: ${q.title}` : `Срок сейчас: ${q.title}`,
+          body: `${q.nextStep ? `Следующий шаг: ${q.nextStep}` : 'Начни с первого маленького шага.'} (до ${q.dueTime})`,
+          open: 'hud', urgent: off === 0,
+        });
+      }
+    }
+  }
+
   // 4) Focus check for long active quests
   if (state.activeQuestId && now - (state.meta.lastFocusCheckAt || now) > s.focusCheckMin * 60000) {
     state.meta.lastFocusCheckAt = now;

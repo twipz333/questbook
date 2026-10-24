@@ -55,6 +55,30 @@ app.whenReady().then(async () => {
   main.webContents.send('nav', 'settings'); await wait(300);
   global.__step = (global.__step || 0) + 1; await js(main, `(()=>{const i=document.getElementById('set-todayLimit'); i.value='2'; i.dispatchEvent(new Event('change',{bubbles:true}));})()`); await wait(400);
   if (st().settings.todayLimit !== 2) return fail('settings');
+  // ---- capture window: token buttons, deadline, links
+  {
+    global.__qb.showCapture(); await wait(700);
+    const cap = BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Новый квест');
+    await js(cap, `(()=>{const i=document.getElementById('cap'); i.value='Купить [тумбочку](https://example.com/t) > выбрать цвет'; i.dispatchEvent(new Event('input'));})()`); await wait(200);
+    await js(cap, `document.querySelector('.tok[data-t="work"]').click()`); await wait(100);
+    await js(cap, `document.querySelector('.tok[data-t="day"]:nth-of-type(2)') ? 0 : 0`);
+    await js(cap, `[...document.querySelectorAll('.tok[data-t="day"]')][1].click()`); await wait(100); // Завтра
+    await js(cap, `(()=>{const t=document.getElementById('cap-time'); t.value='18:30'; t.dispatchEvent(new Event('change',{bubbles:true}));})()`); await wait(100);
+    const txt = await js(cap, `document.getElementById('cap').value`);
+    if (!/#работа/.test(txt) || !/@завтра/.test(txt) || !/до 18:30/.test(txt) || !/> выбрать цвет$/.test(txt.trim())) return fail('capture tokens: ' + txt);
+    await js(cap, `document.querySelector('.tok[data-t="work"]').click()`); await wait(100); // toggle off -> life
+    await js(cap, `document.getElementById('cap').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`); await wait(600);
+    const q = st().quests.find((x) => x.title === 'Купить тумбочку');
+    if (!q || q.area !== 'life' || q.dueTime !== '18:30' || q.status !== 'inbox' || q.nextStep !== 'выбрать цвет' || q.links[0].url !== 'https://example.com/t') return fail('capture save ' + JSON.stringify(q));
+    main.webContents.send('nav', 'book'); await wait(400);
+    const chips = await js(main, `[...document.querySelectorAll('.quest')].map(e=>e.innerText).find(t=>t.includes('тумбочку'))`);
+    if (!chips || !chips.includes('завтра до 18:30') || !chips.includes('тумбочку')) return fail('book chips ' + chips);
+    // edit deadline + add link in the editor
+    await js(main, `[...document.querySelectorAll('.quest')].find(e=>e.innerText.includes('тумбочку')).querySelector('[data-a="editQuest"]').click()`); await wait(300);
+    await js(main, `document.querySelector('[data-d="addLink"]').click()`); await wait(200);
+    await js(main, `(()=>{const u=[...document.querySelectorAll('input[data-f="url"]')].pop(); u.value='ikea.com/item'; document.getElementById('d-duetime').value='20:00'; document.querySelector('[data-d="save"]').click();})()`); await wait(400);
+    if (q.links.length !== 2 || q.links[1].url !== 'https://ikea.com/item' || q.dueTime !== '20:00') return fail('editor links/due ' + JSON.stringify(q));
+  }
   // ---- saga: plan -> one-click start -> finish -> wrap-up with step + note -> manual log
   {
     const A = require('../src/main/actions').createActions(() => st());

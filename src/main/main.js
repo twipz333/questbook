@@ -178,7 +178,7 @@ function setHudVisible(v) {
 function createCapture() {
   if (win.capture && !win.capture.isDestroyed()) return win.capture;
   win.capture = new BrowserWindow({
-    width: 600, height: 236, frame: false, transparent: true, resizable: false, show: false,
+    width: 640, height: 330, frame: false, transparent: true, resizable: false, show: false,
     skipTaskbar: true, alwaysOnTop: true, center: true, title: 'Новый квест', webPreferences: webPrefs(),
   });
   win.capture.loadFile(path.join(RENDERER, 'capture.html'));
@@ -189,7 +189,7 @@ function createCapture() {
 function showCapture() {
   const c = createCapture();
   const cur = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-  c.setPosition(Math.round(cur.x + (cur.width - 600) / 2), Math.round(cur.y + cur.height * 0.22));
+  c.setPosition(Math.round(cur.x + (cur.width - 640) / 2), Math.round(cur.y + cur.height * 0.2));
   c.show(); c.focus();
   c.webContents.send('capture:open');
 }
@@ -320,9 +320,19 @@ function setupIpc() {
       case 'hudHeight': resizeHud(arg); break;
       case 'capture': showCapture(); break;
       case 'captureClose': if (win.capture) win.capture.hide(); break;
+      case 'captureHeight':
+        if (win.capture && !win.capture.isDestroyed()) {
+          const b = win.capture.getBounds();
+          const h = Math.max(160, Math.min(560, Math.round(arg)));
+          if (b.height !== h) win.capture.setBounds({ ...b, height: h });
+        }
+        break;
       case 'overlayClose': if (win.overlay && !win.overlay.isDestroyed()) win.overlay.close(); break;
       case 'dismissAlert': lastAlert = null; broadcast(); break;
       case 'openDataDir': shell.openPath(app.getPath('userData')); break;
+      case 'openUrl':
+        try { const u = new URL(String(arg)); if (u.protocol === 'https:' || u.protocol === 'http:') shell.openExternal(u.href); } catch (_) { /* ignore invalid */ }
+        break;
       case 'updateCheck': if (autoUpdater) autoUpdater.checkForUpdates().catch(() => {}); break;
       case 'updateInstall': if (autoUpdater && updateStatus.state === 'ready') { quitting = true; store.save(true); autoUpdater.quitAndInstall(true, true); } break;
       default: break;

@@ -52,24 +52,27 @@ function createActions(getState, now = () => Date.now()) {
         id: L.uid(), title,
         notes: p.notes || '',
         kind: p.kind === 'main' ? 'main' : 'side',
-        area: p.area === 'life' ? 'life' : 'work',
+        area: p.area === 'work' ? 'work' : 'life',
         estimateMin: p.estimateMin || null,
         nextStep: (p.nextStep || '').trim(),
         steps: (p.steps || []).filter((x) => x.text && x.text.trim()).map((x) => ({ id: L.uid(), text: x.text.trim(), done: false })),
         status: 'inbox', createdAt: now(), doneAt: null, doneDay: null, focusSec: 0,
+        dueDay: p.dueDay || null, dueTime: p.dueDay && p.dueTime ? p.dueTime : null,
+        links: L.cleanLinks(p.links),
       };
       s.quests.unshift(q);
-      let msg = 'Квест записан в книгу';
-      if (p.today) {
-        if (todayCount() < s.settings.todayLimit) { q.status = 'today'; msg = 'Квест взят на сегодня'; }
+      const due = L.dueInfo(q, now(), s.settings.dayStartHour);
+      let msg = due ? `Квест записан · срок ${due.label}` : 'Квест записан в книгу';
+      if (p.today || (q.dueDay && q.dueDay <= today())) {
+        if (todayCount() < s.settings.todayLimit) { q.status = 'today'; msg = due ? `Квест на сегодня · ${due.label}` : 'Квест взят на сегодня'; }
         else msg = `Лимит дня ${s.settings.todayLimit} — квест ждёт в книге`;
       }
       return { ok: true, id: q.id, toast: msg };
     },
 
     questCapture(text) {
-      const p = L.parseCapture(text || '');
-      if (!p.area) p.area = 'work';
+      const p = L.parseCapture(text || '', now(), S().settings.dayStartHour);
+      if (!p.area) p.area = 'life'; // default sphere; #работа switches it
       return A.questAdd(p);
     },
 
@@ -77,6 +80,11 @@ function createActions(getState, now = () => Date.now()) {
       const q = findQ(id);
       if (!q) return { ok: false, error: 'Квест не найден' };
       for (const k of ['title', 'notes', 'kind', 'area', 'estimateMin', 'nextStep']) if (k in patch) q[k] = patch[k];
+      if (Array.isArray(patch.links)) q.links = L.cleanLinks(patch.links);
+      if ('dueDay' in patch) {
+        q.dueDay = /^\d{4}-\d{2}-\d{2}$/.test(patch.dueDay || '') ? patch.dueDay : null;
+        q.dueTime = q.dueDay && /^\d{2}:\d{2}$/.test(patch.dueTime || '') ? patch.dueTime : null;
+      }
       if (Array.isArray(patch.steps)) {
         q.steps = patch.steps.filter((x) => x.text && x.text.trim()).map((x) => ({ id: x.id || L.uid(), text: x.text.trim(), done: !!x.done }));
       }

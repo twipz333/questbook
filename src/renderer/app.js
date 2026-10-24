@@ -67,13 +67,20 @@ function hk(s) { return (s || '').replace('Control', 'Ctrl').replace(/\+/g, '+')
 // =====================================================================
 function questChips(q) {
   const parts = [];
+  const due = q.status !== 'done' && L.dueInfo(q, P.view.now, P.view.settings.dayStartHour);
+  if (due) parts.push(`<span class="chip ${due.overdue ? 'ember' : due.isToday ? 'gold' : ''}" title="Срок">${icon('calendar-clock', 13)}${esc(due.label)}</span>`);
   if (q.sagaId) parts.push(`<span class="chip arcane">${icon('swords', 13)}Сага</span>`);
   parts.push(`<span class="chip ${q.kind === 'main' ? 'gold' : ''}">${icon(q.kind === 'main' ? 'crown' : 'sword', 13)}${q.kind === 'main' ? 'Главный' : 'Побочный'}</span>`);
-  parts.push(`<span class="chip">${q.area === 'life' ? 'Жизнь' : 'Работа'}</span>`);
+  parts.push(`<span class="chip">${q.area === 'work' ? 'Работа' : 'Жизнь'}</span>`);
   if (q.estimateMin) parts.push(`<span class="chip">${icon('hourglass', 13)}~${fmtMin(q.estimateMin)}</span>`);
   if (q.steps.length) parts.push(`<span class="chip">${icon('list-checks', 13)}${q.steps.filter((s) => s.done).length}/${q.steps.length}</span>`);
   parts.push(`<span class="chip xp">+${L.questXp(q)} XP</span>`);
   return parts.join('');
+}
+
+function linkChips(links) {
+  if (!links || !links.length) return '';
+  return `<div class="links">${links.map((l) => `<button type="button" class="link-chip" data-a="openUrl" data-url="${esc(l.url)}" title="${esc(l.url)}">${icon('link', 13)}<span>${esc(l.title || l.host)}</span>${icon('external-link', 12)}</button>`).join('')}</div>`;
 }
 
 function questRow(q, { n = null, mode = 'today' } = {}) {
@@ -99,6 +106,7 @@ function questRow(q, { n = null, mode = 'today' } = {}) {
         <div class="title">${n ? `<span class="n">${n}.</span>` : ''}${esc(q.title)}</div>
         ${next && q.status !== 'done' ? `<div class="step">${icon('chevron-right', 14)}<span>${esc(next)}</span></div>` : ''}
         <div class="chips">${questChips(q)}${isActive ? `<span class="chip ember">${icon('clock', 13)}${fmtMin(v.activeElapsedMin)} в пути</span>` : ''}</div>
+        ${q.status !== 'done' ? linkChips(q.links) : ''}
         ${showSteps ? `<div class="substeps">${q.steps.map((s, i) => `
           <div class="substep ${s.done ? 'done' : ''}">
             <button class="check" role="checkbox" aria-checked="${s.done}" aria-label="Шаг ${i + 1}: ${esc(s.text)}" data-a="questToggleStep" data-id="${q.id}" data-sid="${s.id}">${icon('check', 14)}</button>
@@ -195,6 +203,7 @@ function renderNext() {
       <button class="btn btn-primary" data-a="stepDone" data-id="${n.id}">${icon('check', 16)}Шаг готов</button>
       <button class="btn btn-good" data-a="questComplete" data-id="${n.id}">${icon('trophy', 16)}Квест выполнен</button>
       <button class="btn btn-ghost" data-a="questPause">${icon('pause', 16)}Пауза</button>`;
+    if (v.active.links && v.active.links.length) meta += linkChips(v.active.links);
   } else if (n.type === 'quest') {
     meta = `<span>Квест: <b>${esc(n.title)}</b></span>${n.estimateMin ? `<span class="chip">${icon('hourglass', 13)}~${fmtMin(n.estimateMin)}</span>` : ''}`;
     actions = `<button class="btn btn-primary" data-a="questStart" data-id="${n.id}">${icon('play', 16)}Начать</button>`;
@@ -238,6 +247,10 @@ function renderToday() {
         <div class="section-head"><div class="eyebrow" id="h-q">Квесты дня · <span class="num">${regular}/${limit}</span></div></div>
         <div class="list">
           ${tq.map((q, i) => questRow(q, { n: i + 1 })).join('')}
+          ${v.dueSoon.length ? `<div class="card due-box"><div class="eyebrow">${icon('calendar-clock', 13, 'inline')} Срок подошёл</div>
+            ${v.dueSoon.slice(0, 3).map((q) => { const d = L.dueInfo(q, v.now, v.settings.dayStartHour); return `<div class="due-row"><span class="t">${esc(q.title)}</span><span class="chip ${d.overdue ? 'ember' : 'gold'}">${esc(d.label)}</span>
+              <button class="btn btn-sm" data-a="questToToday" data-id="${q.id}">${icon('sunrise', 14)}В план</button></div>`; }).join('')}
+            ${v.dueSoon.length > 3 ? `<button class="btn btn-ghost btn-sm" data-nav="book">Ещё ${v.dueSoon.length - 3}</button>` : ''}</div>` : ''}
           ${slots ? `<button class="slot" data-nav="briefing">${icon('plus', 16)}Свободный слот — взять квест из книги</button>` : ''}
         </div>
       </section>
@@ -268,8 +281,13 @@ function renderBriefing() {
   const v = P.view;
   const limit = v.settings.todayLimit;
   const already = v.todayQuests.map((q) => q.id);
-  if (ui.pick.size === 0 && already.length) already.forEach((id) => ui.pick.add(id));
-  const candidates = [...v.todayQuests, ...v.inbox.sort((a, b) => (b.kind === 'main') - (a.kind === 'main'))];
+  if (ui.pick.size === 0 && !ui.pickTouched) {
+    already.forEach((id) => ui.pick.add(id));
+    for (const q of v.dueSoon) if (ui.pick.size < limit) ui.pick.add(q.id); // deadlines today go first
+  }
+  const dueIds = new Set(v.dueSoon.map((q) => q.id));
+  const rest = v.inbox.filter((q) => !dueIds.has(q.id)).sort((a, b) => (!!b.dueDay - !!a.dueDay) || (a.dueDay || '').localeCompare(b.dueDay || '') || (b.kind === 'main') - (a.kind === 'main'));
+  const candidates = [...v.todayQuests, ...v.dueSoon, ...rest];
   const picked = ui.pick.size;
   const hour = new Date(v.now).getHours();
   const greet = hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
@@ -282,7 +300,7 @@ function renderBriefing() {
       <section class="section">
         <div class="eyebrow">Книга квестов</div>
         <form class="quickadd" data-form="quickadd" data-today="1">
-          <input class="input" id="brief-add" name="text" placeholder="Новый квест…  ~30  !  #жизнь  > первый шаг" autocomplete="off" aria-label="Быстро добавить квест">
+          <input class="input" id="brief-add" name="text" placeholder="Новый квест…  @завтра 18:00  #работа  > первый шаг" autocomplete="off" aria-label="Быстро добавить квест">
           <button class="btn" type="submit">${icon('plus', 16)}Добавить</button>
         </form>
         <div class="list">
@@ -292,7 +310,7 @@ function renderBriefing() {
             return `<button class="card pick" aria-pressed="${on}" data-a="pick" data-id="${q.id}" ${dis ? 'disabled style="opacity:.5;cursor:not-allowed"' : ''}>
               <span class="check" aria-hidden="true" aria-checked="${on}">${icon('check', 15)}</span>
               <span><b>${esc(q.title)}</b>${q.nextStep ? `<br><span class="muted" style="font-size:13px">→ ${esc(q.nextStep)}</span>` : ''}</span>
-              <span class="chips" style="display:flex;gap:6px">${q.kind === 'main' ? `<span class="chip gold">${icon('crown', 13)}Главный</span>` : ''}${q.estimateMin ? `<span class="chip">~${fmtMin(q.estimateMin)}</span>` : ''}</span>
+              <span class="chips" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${(() => { const d = L.dueInfo(q, v.now, v.settings.dayStartHour); return d ? `<span class="chip ${d.overdue ? 'ember' : d.isToday ? 'gold' : ''}">${icon('calendar-clock', 13)}${esc(d.label)}</span>` : ''; })()}${q.kind === 'main' ? `<span class="chip gold">${icon('crown', 13)}Главный</span>` : ''}${q.estimateMin ? `<span class="chip">~${fmtMin(q.estimateMin)}</span>` : ''}</span>
             </button>`;
           }).join('') : `<div class="card empty">${icon('book-open', 22)}<span>Книга пуста. Запиши первый квест в поле выше.</span></div>`}
         </div>
@@ -330,7 +348,7 @@ function renderBook() {
         <input class="input" id="book-add" name="text" placeholder="Что нужно сделать?" autocomplete="off" aria-label="Быстро добавить квест" aria-describedby="syntax">
         <button class="btn btn-primary" type="submit">${icon('plus', 16)}Записать</button>
       </form>
-      <div class="syntax" id="syntax"><span><code>~30</code> или <code>2ч</code> оценка</span><span><code>!</code> главный</span><span><code>#жизнь</code> сфера</span><span><code>@сегодня</code> на день</span><span><code>&gt; шаг</code> первый шаг</span></div>
+      <div class="syntax" id="syntax"><span><code>#работа</code> сфера (иначе — жизнь)</span><span><code>@сегодня</code> <code>@завтра</code> <code>@пт</code> <code>@25.10</code> срок</span><span><code>до 22:00</code> время</span><span><code>~30</code> оценка</span><span><code>!</code> главный</span><span><code>[текст](https://…)</code> ссылка</span><span><code>&gt; шаг</code> первый шаг</span></div>
     </section>
     <div class="filters" role="group" aria-label="Фильтр">
       ${[['all', 'Все'], ['work', 'Работа'], ['life', 'Жизнь']].map(([k, l]) => `<button class="toggle-chip" aria-pressed="${ui.filter === k}" data-a="filter" data-key="${k}">${l}</button>`).join('')}
@@ -702,6 +720,17 @@ function stepsEditor(list, key = 'steps', label = 'Шаг') {
   </div>`;
 }
 
+function linksEditor(links) {
+  return `<div class="steps-edit">${links.map((l, i) => `
+    <div class="step-edit link-edit">
+      <input class="input" data-link="${i}" data-f="title" value="${esc(l.title)}" placeholder="Название" aria-label="Название ссылки ${i + 1}">
+      <input class="input" data-link="${i}" data-f="url" value="${esc(l.url)}" placeholder="https://…" aria-label="Адрес ссылки ${i + 1}">
+      <button type="button" class="btn btn-ghost icon-btn btn-sm" data-d="rmLink" data-i="${i}" aria-label="Удалить ссылку ${i + 1}">${icon('x', 15)}</button>
+    </div>`).join('')}
+    <button type="button" class="btn btn-ghost btn-sm" data-d="addLink" style="align-self:flex-start">${icon('link', 15)}Ссылка</button>
+  </div>`;
+}
+
 function pickOpt(key, value, selected, label, sub = '') {
   return `<button type="button" class="pick-opt" aria-pressed="${selected}" data-d="sval" data-k="${key}" data-v="${esc(value)}">
     <span class="check round" aria-hidden="true" aria-checked="${selected}">${icon('check', 13)}</span>
@@ -724,13 +753,19 @@ function renderDrawer() {
         <button type="button" class="toggle-chip" aria-pressed="${draft.kind === 'main'}" data-d="kind" data-v="main">Главный · ×1.5 XP</button>
         <button type="button" class="toggle-chip" aria-pressed="${draft.kind !== 'main'}" data-d="kind" data-v="side">Побочный</button></div></div>
       <div class="field"><span class="label">Сфера</span><div class="chips-row">
-        <button type="button" class="toggle-chip" aria-pressed="${draft.area !== 'life'}" data-d="area" data-v="work">Работа</button>
-        <button type="button" class="toggle-chip" aria-pressed="${draft.area === 'life'}" data-d="area" data-v="life">Жизнь</button></div></div>
+        <button type="button" class="toggle-chip" aria-pressed="${draft.area !== 'work'}" data-d="area" data-v="life">Жизнь</button>
+        <button type="button" class="toggle-chip" aria-pressed="${draft.area === 'work'}" data-d="area" data-v="work">Работа</button></div></div>
+      <div class="field"><span class="label">Срок <span class="faint">· необязательно</span></span><div class="chips-row">
+        <input class="input num" style="width:170px" type="date" id="d-due" value="${esc(draft.dueDay || '')}" aria-label="Дата срока">
+        <input class="input num" style="width:120px" type="time" id="d-duetime" value="${esc(draft.dueTime || '')}" aria-label="Время срока">
+        ${draft.dueDay ? '<button type="button" class="btn btn-ghost btn-sm" data-d="noDue">Без срока</button>' : ''}</div>
+        <span class="hint">С временем придёт напоминание за час и в срок. В день срока квест предложится в план.</span></div>
       <div class="field"><span class="label">Оценка времени</span><div class="chips-row">
         ${[5, 15, 30, 60, 90, 120, 240].map((m) => `<button type="button" class="toggle-chip" aria-pressed="${draft.estimateMin === m}" data-d="est" data-v="${m}">${fmtMin(m)}</button>`).join('')}</div>
         <span class="hint">Если больше 2 часов — лучше разбить на шаги.</span></div>
       <div class="field"><label for="d-next">Первый шаг</label><input class="input" id="d-next" value="${esc(draft.nextStep)}" placeholder="Что можно сделать за 2 минуты?"><span class="hint">Самое маленькое действие, с которого точно начнёшь.</span></div>
       <div class="field"><span class="label">Шаги</span>${stepsEditor(draft.steps)}</div>
+      <div class="field"><span class="label">Ссылки</span>${linksEditor(draft.links)}<span class="hint">Название можно не писать — покажется адрес сайта.</span></div>
       <div class="field"><label for="d-notes">Заметки</label><textarea class="textarea" id="d-notes">${esc(draft.notes)}</textarea></div>`;
     foot = `${draft.id ? `<button class="btn btn-danger btn-ghost" data-d="delete">${icon('trash-2', 15)}Удалить</button>` : ''}<span class="spacer"></span>
       <button class="btn btn-ghost" data-d="close">Отмена</button>
@@ -842,6 +877,8 @@ function readDrawerInputs() {
   if (g('d-notes') !== undefined) d.notes = g('d-notes');
   if (g('d-time') !== undefined) d.time = g('d-time') || null;
   if (g('d-why') !== undefined) d.why = g('d-why');
+  if (g('d-due') !== undefined) { d.dueDay = g('d-due') || null; d.dueTime = d.dueDay ? (g('d-duetime') || null) : null; }
+  $drawer.querySelectorAll('input[data-link]').forEach((el) => { d.links[+el.dataset.link][el.dataset.f] = el.value; });
   if (g('d-goal') !== undefined) d.goal = g('d-goal');
   if (g('d-crit') !== undefined) d.criterion = g('d-crit');
   if (g('d-note') !== undefined) d.note = g('d-note');
@@ -850,7 +887,9 @@ function readDrawerInputs() {
 }
 
 function openQuestEditor(q) {
-  ui.drawer = { type: 'quest', draft: q ? JSON.parse(JSON.stringify(q)) : { title: '', kind: 'side', area: 'work', estimateMin: 30, nextStep: '', steps: [], notes: '' } };
+  const draft = q ? JSON.parse(JSON.stringify(q)) : { title: '', kind: 'side', area: 'life', estimateMin: 30, nextStep: '', steps: [], notes: '', dueDay: null, dueTime: null };
+  draft.links = (draft.links || []).map((l) => ({ title: l.title || '', url: l.url }));
+  ui.drawer = { type: 'quest', draft };
   renderDrawer();
   document.getElementById('d-title').focus();
 }
@@ -892,6 +931,9 @@ $drawer.addEventListener('click', async (e) => {
       const ins = $drawer.querySelectorAll(`input[data-list="${key}"]`); ins[ins.length - 1].focus(); return;
     }
     case 'rmItem': d[t.dataset.list].splice(+t.dataset.i, 1); break;
+    case 'addLink': d.links.push({ title: '', url: '' }); renderDrawer(); { const ins = $drawer.querySelectorAll('input[data-f="url"]'); ins[ins.length - 1].focus(); } return;
+    case 'rmLink': d.links.splice(+t.dataset.i, 1); break;
+    case 'noDue': d.dueDay = null; d.dueTime = null; break;
     case 'sval': d[t.dataset.k] = v; break;
     case 'remindToggle': d.remind = d.remind === false; break;
     case 'chapterDone': d.chapterDone = !d.chapterDone; break;
@@ -955,7 +997,7 @@ function render() {
 }
 
 function nav(page) {
-  if (page === 'briefing') ui.pick = new Set();
+  if (page === 'briefing') { ui.pick = new Set(); ui.pickTouched = false; }
   ui.page = page;
   ui.askNext = null;
   render();
@@ -991,6 +1033,7 @@ document.addEventListener('click', async (e) => {
     case 'expand': ui.expanded[t.dataset.key] = !ui.expanded[t.dataset.key]; render(); break;
     case 'filter': ui.filter = t.dataset.key; render(); break;
     case 'pick': {
+      ui.pickTouched = true;
       if (ui.pick.has(id)) ui.pick.delete(id); else if (ui.pick.size < P.view.settings.todayLimit) ui.pick.add(id);
       render(); break;
     }
@@ -1031,6 +1074,7 @@ document.addEventListener('click', async (e) => {
     case 'export': { const r = await qb.exportData(); if (r.toast) toast(r.toast); break; }
     case 'import': { const r = await qb.importData(); if (r.error) toast(r.error, 'err'); else if (r.toast) toast(r.toast); break; }
     case 'dataDir': qb.ui('openDataDir'); break;
+    case 'openUrl': qb.ui('openUrl', t.dataset.url); break;
     case 'updateCheck': qb.ui('updateCheck'); break;
     case 'updateInstall': qb.ui('updateInstall'); break;
     default:

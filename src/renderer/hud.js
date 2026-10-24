@@ -1,6 +1,7 @@
 import { qb, esc, icon, fmtMin, fmtUntil, applyTheme, run, patch } from './common.js';
 
 const $hud = document.getElementById('hud');
+const L = globalThis.QBLogic;
 let P = null;
 let askNext = null;
 let wrap = null; // saga session wrap-up: { logId, stepId, stepText, title, min }
@@ -15,6 +16,13 @@ function bar(v) {
     <button class="ib" data-a="collapse" title="Свернуть" aria-label="Свернуть HUD">${icon('minimize-2', 15)}</button>
     <button class="ib" data-a="hide" title="Скрыть (${esc(v.settings.hotkeyHud)})" aria-label="Скрыть HUD">${icon('x', 16)}</button>
   </div>`;
+}
+
+function dueLabel(q, v, short = false) {
+  const d = L.dueInfo(q, v.now, v.settings.dayStartHour);
+  if (!d) return '';
+  if (short && d.isToday && q.dueTime && !d.overdue) return `до ${q.dueTime}`;
+  return d.label;
 }
 
 function nowSection(v) {
@@ -47,7 +55,8 @@ function nowSection(v) {
     return `<div class="sec">
       <div class="lbl"><span>Сейчас</span><span class="num" style="color:var(--ember)">${fmtMin(v.activeElapsedMin)}${q.estimateMin ? ` / ~${fmtMin(q.estimateMin)}` : ''}</span></div>
       <div class="now-step">${esc(step || 'Сделай первый маленький шаг')}</div>
-      <div class="now-quest">${q.kind === 'main' ? '★ ' : ''}${esc(q.title)}</div>
+      <div class="now-quest">${q.kind === 'main' ? '★ ' : ''}${esc(q.title)}${dueLabel(q, v) ? ` · <span class="due">${esc(dueLabel(q, v))}</span>` : ''}</div>
+      ${(q.links || []).length ? `<div class="hlinks">${q.links.slice(0, 3).map((l) => `<button class="hlink" data-a="url" data-url="${esc(l.url)}" title="${esc(l.url)}">${icon('link', 12)}${esc(l.title || l.host)}</button>`).join('')}</div>` : ''}
       <div class="row">
         <button class="btn btn-primary" data-a="step" data-id="${q.id}">${icon('check', 14)}Шаг готов</button>
         <button class="btn btn-good" data-a="complete" data-id="${q.id}">${icon('trophy', 14)}Квест</button>
@@ -57,7 +66,7 @@ function nowSection(v) {
   const tq = v.todayQuests.slice(0, 3);
   if (tq.length) {
     return `<div class="sec"><div class="lbl"><span>Выбери квест</span><span>${tq.length}/${v.settings.todayLimit}</span></div>
-      ${tq.map((q, i) => `<div class="qrow"><span class="n">${i + 1}</span><span class="t" title="${esc(q.title)}">${esc(q.title)}</span>
+      ${tq.map((q, i) => `<div class="qrow"><span class="n">${i + 1}</span><span class="t" title="${esc(q.title)}">${esc(q.title)}</span>${dueLabel(q, v) ? `<span class="due num">${esc(dueLabel(q, v, true))}</span>` : ''}
         <button class="btn btn-sm ${i === 0 ? 'btn-primary' : ''}" data-a="start" data-id="${q.id}" aria-label="Начать ${esc(q.title)}">${icon('play', 13)}</button></div>`).join('')}
     </div>`;
   }
@@ -175,6 +184,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'habit': await run('habitToggle', id); break;
     case 'saga': await run('sagaStartSession', id); break;
+    case 'url': qb.ui('openUrl', t.dataset.url); break;
     case 'hstep': await run('habitToggleStep', id, t.dataset.sid); break;
     default: break;
   }

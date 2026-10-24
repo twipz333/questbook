@@ -381,3 +381,105 @@ test('quiet saga suggests a 5-minute start; done saga reopens when a chapter is 
   assert.equal(s.player.xp, xp - L.SAGA_XP); // saga bonus can be earned again, not twice
   assert.equal(A.sagaPause(g.id).ok, true);
 });
+
+// ---------------------------------------------------------------- deadlines & default sphere (1.3)
+test('parseCapture: deadlines, time, weekdays, default sphere', () => {
+  const now = at('2026-10-24T15:00:00'); // Saturday
+  const P = (x) => L.parseCapture(x, now, 4);
+  let p = P('Купить корм');
+  assert.equal(p.area, null); assert.equal(p.dueDay, null); assert.equal(p.today, false);
+  p = P('Купить корм @сегодня');
+  assert.equal(p.today, true); assert.equal(p.dueDay, null); // plan, not a deadline
+  p = P('Купить корм @сегодня 19:00');
+  assert.equal(p.today, true); assert.equal(p.dueDay, '2026-10-24'); assert.equal(p.dueTime, '19:00');
+  p = P('Отчёт #работа @завтра 22:00 > открыть шаблон');
+  assert.deepEqual([p.title, p.area, p.dueDay, p.dueTime, p.today, p.nextStep], ['Отчёт', 'work', '2026-10-25', '22:00', false, 'открыть шаблон']);
+  p = P('Позвонить маме до 22:00');
+  assert.deepEqual([p.title, p.dueDay, p.dueTime, p.today], ['Позвонить маме', '2026-10-24', '22:00', true]);
+  assert.equal(P('Билеты @послезавтра').dueDay, '2026-10-26');
+  assert.equal(P('Билеты @25.10').dueDay, '2026-10-25');
+  assert.equal(P('Билеты @25.10.2026').dueDay, '2026-10-25');
+  assert.equal(P('Подарок @05.01').dueDay, '2027-01-05'); // past date this year -> next year
+  assert.equal(P('Ревью @пт').dueDay, '2026-10-30');
+  assert.equal(P('Ревью @сб').today, true); // today is Saturday
+  p = P('Странная дата @31.02');
+  assert.equal(p.dueDay, null); assert.match(p.title, /@31\.02/);
+  // after midnight (still "yesterday" logically): @сегодня is the 24th, @завтра the 25th
+  assert.equal(L.parseCapture('x @завтра', at('2026-10-25T01:30:00'), 4).dueDay, '2026-10-25');
+  // existing syntax still works
+  p = P('Починить алерты ~45 ! #работа @сегодня');
+  assert.deepEqual([p.title, p.estimateMin, p.kind, p.area, p.today], ['Починить алерты', 45, 'main', 'work', true]);
+});
+
+test('dueInfo labels and overdue', () => {
+  const now = at('2026-10-24T21:30:00');
+  const d = (dueDay, dueTime = null) => L.dueInfo({ dueDay, dueTime }, now, 4);
+  assert.equal(d('2026-10-24', '22:00').label, 'сегодня до 22:00');
+  assert.equal(d('2026-10-24', '22:00').minutesLeft, 30);
+  assert.equal(d('2026-10-24', '21:00').overdue, true);
+  assert.equal(d('2026-10-24').label, 'до конца дня');
+  assert.equal(d('2026-10-25').label, 'до завтра');
+  assert.equal(d('2026-10-30').label, 'до пт');
+  assert.equal(d('2026-11-10').label, 'до 10 ноя');
+  assert.equal(d('2026-10-22').label, 'просрочен на 2 дня');
+  assert.equal(d('2026-10-24', '01:00').overdue, false); // 01:00 of the logical day = after midnight
+});
+
+test('captured quests: default life, deadline, today plan, due-soon view, reminders', () => {
+  let t = at('2026-10-24T12:00:00');
+  const s = L.defaultState(t);
+  s.meta.lastBriefing = '2026-10-24'; s.meta.lastReview = '2026-10-24';
+  const A = createActions(() => s, () => t);
+  A.questCapture('Купить корм');
+  assert.equal(s.quests[0].area, 'life');
+  assert.equal(s.quests[0].status, 'inbox');
+  A.questCapture('Отчёт #работа @сегодня 22:00');
+  assert.equal(s.quests[0].area, 'work');
+  assert.equal(s.quests[0].status, 'today');
+  assert.equal(s.quests[0].dueTime, '22:00');
+  A.questCapture('Билеты @завтра');
+  const tickets = s.quests[0];
+  assert.equal(tickets.status, 'inbox');
+  assert.equal(tickets.dueDay, '2026-10-25');
+  // next day it shows up as due
+  t = at('2026-10-25T10:00:00');
+  assert.deepEqual(L.buildView(s, t).dueSoon.map((q) => q.title), ['Билеты']);
+  // editing the deadline / clearing it
+  A.questUpdate(tickets.id, { dueDay: '2026-10-27', dueTime: '18:30' });
+  assert.equal(tickets.dueTime, '18:30');
+  A.questUpdate(tickets.id, { dueDay: '' });
+  assert.equal(tickets.dueDay, null); assert.equal(tickets.dueTime, null);
+  // reminders an hour before and at the time, once each
+  const s2 = L.defaultState(at('2026-10-24T12:00:00'));
+  s2.meta.lastBriefing = '2026-10-24'; s2.meta.lastReview = '2026-10-24';
+  const A2 = createActions(() => s2, () => at('2026-10-24T12:00:00'));
+  A2.questCapture('Отправить отчёт @сегодня 22:00 > собрать цифры');
+  s2.activeQuestId = s2.quests[0].id; // avoid the "no active quest" nudge in this test
+  const due = (x) => tick(s2, { now: at(x), idleSec: 0 }).filter((e) => /срок/i.test(e.title));
+  assert.equal(due('2026-10-24T20:59:00').length, 0);
+  const e1 = due('2026-10-24T21:00:00');
+  assert.equal(e1.length, 1); assert.match(e1[0].title, /Через час/); assert.match(e1[0].body, /собрать цифры/);
+  assert.equal(due('2026-10-24T21:05:00').length, 0);
+  assert.equal(due('2026-10-24T22:01:00').length, 1);
+});
+
+test('links: markdown and bare URLs in capture, cleaned on save', () => {
+  const now = at('2026-10-24T15:00:00');
+  let p = L.parseCapture('Купить [тумбочку](https://example.com/item?id=1:2) @завтра 18:00', now, 4);
+  assert.equal(p.title, 'Купить тумбочку');
+  assert.deepEqual(p.links, [{ title: 'тумбочку', url: 'https://example.com/item?id=1:2' }]);
+  assert.equal(p.dueTime, '18:00'); // URL digits didn't hijack the time
+  p = L.parseCapture('Прочитать статью https://habr.com/ru/articles/123/ ~20', now, 4);
+  assert.equal(p.title, 'Прочитать статью');
+  assert.equal(p.links[0].url, 'https://habr.com/ru/articles/123/');
+  assert.equal(p.estimateMin, 20);
+  const c = L.cleanLinks([{ title: '', url: 'www.ikea.com/ru' }, { url: 'javascript:alert(1)' }, { url: 'file:///C:/x' }, { title: 'x', url: '' }]);
+  assert.deepEqual(c, [{ title: '', url: 'https://www.ikea.com/ru', host: 'ikea.com' }]);
+  const s = L.defaultState(now);
+  const A = createActions(() => s, () => now);
+  A.questCapture('Купить [тумбочку](https://example.com/t)');
+  assert.equal(s.quests[0].links[0].host, 'example.com');
+  A.questUpdate(s.quests[0].id, { links: [...s.quests[0].links, { title: 'Отзывы', url: 'example.org/r' }] });
+  assert.equal(s.quests[0].links.length, 2);
+  assert.equal(s.quests[0].links[1].url, 'https://example.org/r');
+});
