@@ -72,5 +72,5 @@ npm install
 npm start          # запуск
 npm test           # тесты логики
 npm run dist       # установщик в dist/
-npm run release    # тег vX.Y.Z → GitHub Actions соберёт и опубликует релиз
+npm run release    # после смены version в package.json: push → GitHub Actions соберёт релиз
 ```
