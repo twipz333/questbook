@@ -483,3 +483,69 @@ test('links: markdown and bare URLs in capture, cleaned on save', () => {
   assert.equal(s.quests[0].links.length, 2);
   assert.equal(s.quests[0].links[1].url, 'https://example.org/r');
 });
+
+// ---------------------------------------------------------------- work / free time nudges (1.4)
+function nudgeFixture(when) {
+  const t = at(when);
+  const s = L.defaultState(t);
+  s.meta.lastBriefing = L.dayKey(t); s.meta.lastReview = L.dayKey(t);
+  s.habits = []; // keep rituals out of these tests
+  const A = createActions(() => s, () => t);
+  const nudges = (x = when, idle = 0) => tick(s, { now: at(x), idleSec: idle }).filter((e) => e.kind === 'notify');
+  return { s, A, nudges };
+}
+
+test('free time: life quests are suggested, work quests are not', () => {
+  const { A, nudges } = nudgeFixture('2026-10-24T16:00:00'); // Saturday
+  A.questCapture('Отчёт #работа @сегодня');
+  assert.equal(nudges().length, 0); // only work in the plan -> silence on a weekend
+  A.questCapture('Купить корм @сегодня > проверить остатки');
+  const n = nudges('2026-10-24T17:40:00');
+  assert.equal(n.length, 1);
+  assert.match(n[0].title, /проверить остатки/);
+});
+
+test('work hours: work first, life as a fallback, generic prompt when empty', () => {
+  const f = nudgeFixture('2026-10-26T11:00:00'); // Monday
+  assert.match(f.nudges()[0].title, /Нет активного квеста/);
+  const g = nudgeFixture('2026-10-26T11:00:00');
+  g.A.questCapture('Купить корм @сегодня');
+  g.A.questCapture('Ревью PR #работа @сегодня');
+  assert.match(g.nudges()[0].body, /Ревью PR/);
+  const h = nudgeFixture('2026-10-26T11:00:00');
+  h.A.questCapture('Купить корм @сегодня');
+  assert.match(h.nudges()[0].body, /Купить корм/); // no work quests -> life is fine
+});
+
+test('life saga is suggested when nothing else; outside active hours nothing; free interval is gentler', () => {
+  const f = nudgeFixture('2026-10-24T12:00:00'); // Saturday
+  f.A.sagaSave({ title: 'Япония', chapters: [{ title: 'Возвращение' }], targetPerWeek: 3 });
+  const g = f.s.sagas[0];
+  f.A.chapterSave(g.id, g.chapters[0].id, { title: 'Возвращение', steps: [{ text: 'Открыть Wagotabi' }] });
+  const n = f.nudges();
+  assert.equal(n.length, 1);
+  assert.match(n[0].title, /Япония/);
+  assert.match(n[0].body, /Открыть Wagotabi/);
+  assert.equal(f.nudges('2026-10-24T13:00:00').length, 0); // < 90 min
+  assert.equal(f.nudges('2026-10-24T13:31:00').length, 1);
+  assert.equal(f.nudges('2026-10-24T23:30:00').length, 0); // after activeEnd
+  assert.equal(f.nudges('2026-10-25T08:30:00').length, 0); // before activeStart
+  f.s.settings.nudgeFreeMin = 0;
+  assert.equal(f.nudges('2026-10-25T15:00:00').length, 0); // off outside work
+});
+
+test('quiet work saga waits for work hours; plan order follows the time of day', () => {
+  const t0 = at('2026-10-10T12:00:00');
+  const s = L.defaultState(t0);
+  s.habits = [];
+  s.settings.nudgeFreeMin = 0; s.settings.nudgeIdleMin = 0;
+  const A = createActions(() => s, () => t0);
+  A.sagaSave({ title: 'CKA', area: 'work', quietDays: 5, chapters: [{ title: 'Networking' }] });
+  const inv = (x) => tick(s, { now: at(x), idleSec: 0 }).filter((e) => /Хочешь продолжить/.test(e.title));
+  assert.equal(inv('2026-10-17T12:00:00').length, 0); // Saturday
+  assert.equal(inv('2026-10-19T12:00:00').length, 1); // Monday, work hours
+  A.questCapture('Купить корм @сегодня');
+  A.questCapture('Ревью PR #работа @сегодня');
+  assert.equal(L.buildView(s, at('2026-10-19T12:00:00')).todayQuests[0].title, 'Ревью PR');
+  assert.equal(L.buildView(s, at('2026-10-19T20:00:00')).todayQuests[0].title, 'Купить корм');
+});

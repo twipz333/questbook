@@ -677,7 +677,9 @@ function renderSettings() {
     <section class="card set-card">
       <div class="eyebrow">Дисциплина</div>
       ${setRow('Квестов на день', 'Больше трёх — обычно перебор. Лимит защищает от паралича выбора.', num('todayLimit', s.todayLimit, 1, 5, 'шт.'))}
-      ${setRow('Напоминание без активного квеста', 'В рабочие часы, только когда ты за компьютером.', num('nudgeIdleMin', s.nudgeIdleMin, 10, 240, 'мин'))}
+      ${setRow('Активные часы', 'Когда вообще можно напоминать «чем заняться». Сроки и ритуалы приходят всегда.', `${time('activeStart', s.activeStart || '09:00')}<span class="muted">—</span>${time('activeEnd', s.activeEnd || '22:00')}`)}
+      ${setRow('Нет активного квеста: в рабочие часы', 'Сначала рабочие квесты и саги, если их нет — «Жизнь». Только когда ты за компьютером.', num('nudgeIdleMin', s.nudgeIdleMin, 0, 240, 'мин'))}
+      ${setRow('Нет активного квеста: вне работы', 'Только квесты и саги «Жизнь». 0 — не напоминать.', num('nudgeFreeMin', s.nudgeFreeMin ?? 90, 0, 480, 'мин'))}
       ${setRow('Проверка фокуса', 'Сколько минут в квесте до напоминания отметить шаг и размяться.', num('focusCheckMin', s.focusCheckMin, 15, 180, 'мин'))}
       ${setRow('Утренний план', 'При первом включении ПК за день откроется план дня.', sw('morningBriefing', s.morningBriefing, 'Утренний план'))}
       ${setRow('Вечерний итог', 'Уведомление с победами дня.', time('eveningReview', s.eveningReview))}
@@ -685,7 +687,7 @@ function renderSettings() {
     </section>
     <section class="card set-card">
       <div class="eyebrow">Рабочий день</div>
-      ${setRow('Часы работы', 'Напоминания о квестах приходят только в эти часы.', `${time('workStart', s.workStart)}<span class="muted">—</span>${time('workEnd', s.workEnd)}`)}
+      ${setRow('Часы работы', 'В это время в приоритете рабочие квесты и саги. Вне их — «Жизнь».', `${time('workStart', s.workStart)}<span class="muted">—</span>${time('workEnd', s.workEnd)}`)}
       ${setRow('Рабочие дни', '', `<div class="chips-row">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button class="toggle-chip" aria-pressed="${s.workDays.includes(d)}" data-a="workDay" data-key="${d}">${WD[d]}</button>`).join('')}</div>`)}
     </section>
     <section class="card set-card">

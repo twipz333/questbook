@@ -51,17 +51,29 @@ function tick(state, ctx) {
     if (hour >= s.dayStartHour + 2 && hour < 16) events.push({ kind: 'briefing' });
   }
 
-  // 3) Work-hours nudge: no active quest while at the PC
-  const isWorkday = (s.workDays || []).includes(L.weekday(today));
-  const ws = L.timeInDay(today, s.workStart, s.dayStartHour);
-  const we = L.timeInDay(today, s.workEnd, s.dayStartHour);
-  if (isWorkday && ws && we && now >= ws && now < we && !state.activeQuestId && active
-      && now - (state.meta.lastNudgeAt || 0) > s.nudgeIdleMin * 60000) {
-    state.meta.lastNudgeAt = now;
-    const q = view.todayQuests[0];
-    events.push(q
-      ? { kind: 'notify', title: `Следующий шаг: ${q.nextStep || q.title}`, body: `Квест «${q.title}»${q.estimateMin ? ` · ~${q.estimateMin} мин` : ''}. Нажми ▶ в HUD.`, open: 'hud' }
-      : { kind: 'notify', title: 'Нет активного квеста', body: 'Выбери один квест на ближайший час. Ctrl+Alt+Q — записать новый.', open: 'hud' });
+  // 3) Nothing active while at the PC -> suggest one concrete thing.
+  //    Work hours: work quests/sagas first, life as a fallback. Free time: life only, gentler interval.
+  const mode = L.timeMode(s, now);
+  const interval = mode === 'work' ? s.nudgeIdleMin : s.nudgeFreeMin;
+  if (interval > 0 && !state.activeQuestId && active && L.inActiveHours(s, now)
+      && now - (state.meta.lastNudgeAt || 0) > interval * 60000) {
+    const sug = L.pickSuggestion(view, mode);
+    if (sug) {
+      state.meta.lastNudgeAt = now;
+      if (sug.kind === 'quest') {
+        const q = sug.quest;
+        const due = L.dueInfo(q, now, s.dayStartHour);
+        events.push({ kind: 'notify', title: `Следующий шаг: ${q.nextStep || q.title}`,
+          body: `Квест «${q.title}»${q.estimateMin ? ` · ~${q.estimateMin} мин` : ''}${due ? ` · ${due.label}` : ''}. Нажми ▶ в HUD.`, open: 'hud' });
+      } else if (sug.kind === 'saga') {
+        const g = sug.saga;
+        events.push({ kind: 'notify', title: `Есть время на «${g.title}»?`,
+          body: `${g.nextStep ? g.nextStep.text : `Глава «${g.current.title}»`} · ${g.suggestedMin} мин. На неделе ${g.weekSessions}/${g.target}.`, open: 'hud', soft: true });
+      } else {
+        events.push({ kind: 'notify', title: 'Нет активного квеста',
+          body: sug.area === 'work' ? 'Выбери рабочий квест на ближайший час.' : 'Выбери один квест на ближайший час. Ctrl+Alt+Q — записать новый.', open: 'hud' });
+      }
+    }
   }
 
   // 3b) Deadlines with a time: an hour before and when it's due
@@ -109,11 +121,11 @@ function tick(state, ctx) {
   // 6) Sagas gone quiet: a gentle invitation, never a reproach.
   //    First after quietDays, then every remindEvery days; activity or resume resets the cycle;
   //    paused sagas and sagas with reminders off stay silent.
-  const hourNow = new Date(now).getHours();
-  if (active && hourNow >= 10 && hourNow < 21) {
+  if (active && L.inActiveHours(s, now)) {
     for (const v of view.sagas) {
       const g = state.sagas.find((x) => x.id === v.id);
       if (!g || !L.sagaNudgeDue(g, v, now)) continue;
+      if (v.area === 'work' && mode !== 'work') continue; // work sagas wait for work hours
       g.lastNudgeAt = now;
       const action = v.nextStep ? v.nextStep.text : v.current ? `глава «${v.current.title}»` : 'любое маленькое действие';
       events.push({

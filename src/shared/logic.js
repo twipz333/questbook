@@ -320,6 +320,8 @@ function defaultState(now = Date.now()) {
       dayStartHour: 4,
       workStart: '10:00', workEnd: '19:00', workDays: [1, 2, 3, 4, 5],
       nudgeIdleMin: 40,
+      nudgeFreeMin: 90,           // outside work hours; 0 = off
+      activeStart: '09:00', activeEnd: '22:00', // when reminders may come at all
       focusCheckMin: 50,
       todayLimit: 3,
       hudEnabled: true, hudOnTop: true, hudCollapsed: false, hudBounds: null, hudAnchor: 'auto',
@@ -355,6 +357,47 @@ function defaultState(now = Date.now()) {
   };
 }
 
+// ---------- Work / free time ----------
+/** 'work' inside work hours on a workday, otherwise 'free'. */
+function timeMode(settings, now = Date.now()) {
+  const today = dayKey(now, settings.dayStartHour);
+  if (!(settings.workDays || []).includes(weekday(today))) return 'free';
+  const ws = timeInDay(today, settings.workStart, settings.dayStartHour);
+  const we = timeInDay(today, settings.workEnd, settings.dayStartHour);
+  return ws && we && now >= ws && now < we ? 'work' : 'free';
+}
+
+/** Hours when nudges are allowed at all (deadlines and rituals ignore this). */
+function inActiveHours(settings, now = Date.now()) {
+  const today = dayKey(now, settings.dayStartHour);
+  const a = timeInDay(today, settings.activeStart || '09:00', settings.dayStartHour);
+  const b = timeInDay(today, settings.activeEnd || '22:00', settings.dayStartHour);
+  return now >= a && now < b;
+}
+
+/** Spheres to suggest, in order: work hours prefer work and fall back to life; free time is life only. */
+function preferredAreas(mode) { return mode === 'work' ? ['work', 'life'] : ['life']; }
+
+/**
+ * What to suggest when nothing is active.
+ * -> { kind: 'quest', quest, due } | { kind: 'saga', saga } | { kind: 'plan', area } | null
+ */
+function pickSuggestion(view, mode) {
+  const areaOf = (x) => (x.area === 'work' ? 'work' : 'life');
+  for (const area of preferredAreas(mode)) {
+    const q = view.todayQuests.find((x) => areaOf(x) === area && !x.sagaId);
+    if (q) return { kind: 'quest', quest: q };
+    const d = view.dueSoon.find((x) => areaOf(x) === area);
+    if (d) return { kind: 'quest', quest: d, due: true };
+    const g = view.sagas
+      .filter((x) => x.status === 'active' && areaOf(x) === area && x.current && x.weekSessions < x.target && !x.openActive)
+      .sort((a, b) => a.weekSessions / a.target - b.weekSessions / b.target)[0];
+    if (g) return { kind: 'saga', saga: g };
+  }
+  if (mode === 'work') return { kind: 'plan', area: view.inbox.some((x) => x.area === 'work') ? 'work' : null };
+  return null;
+}
+
 // ---------- View model ----------
 function fmtHM(ts) {
   const d = new Date(ts);
@@ -368,7 +411,9 @@ function buildView(state, now = Date.now()) {
   const active = state.quests.find((q) => q.id === state.activeQuestId) || null;
 
   const byDue = (a, b) => ((dueInfo(a, now, s.dayStartHour) || { sortKey: 9e15 }).sortKey) - ((dueInfo(b, now, s.dayStartHour) || { sortKey: 9e15 }).sortKey);
-  const todayQuests = state.quests.filter((q) => q.status === 'today').sort(byDue);
+  const mode = timeMode(s, now);
+  const pref = (q) => (preferredAreas(mode)[0] === (q.area === 'work' ? 'work' : 'life') ? 0 : 1);
+  const todayQuests = state.quests.filter((q) => q.status === 'today').sort((a, b) => pref(a) - pref(b) || byDue(a, b));
   const inbox = state.quests.filter((q) => q.status === 'inbox');
   // deadline today or already passed, but not in today's plan yet
   const dueSoon = inbox.filter((q) => q.dueDay && q.dueDay <= today).sort(byDue);
@@ -416,7 +461,7 @@ function buildView(state, now = Date.now()) {
   return {
     now, today, level: { ...lvl, title: levelTitle(lvl.level) },
     active, activeElapsedMin, next,
-    todayQuests, inbox, doneToday, dueSoon,
+    todayQuests, inbox, doneToday, dueSoon, mode,
     habits, todayHabits,
     habitsDone: todayHabits.filter((h) => h.done).length,
     xpToday,
@@ -436,7 +481,7 @@ function plural(n, one, few, many) {
 const API = {
   uid, dayKey, addDays, weekday, timeInDay, parseHM, fmtHM,
   levelInfo, levelTitle, questXp, habitXp, STEP_XP,
-  isScheduled, isDone, habitStreak, parseCapture, dueInfo, cleanLinks, resolveDayToken, daysBetween, defaultState, buildView, plural, DAY_MS,
+  isScheduled, isDone, habitStreak, parseCapture, timeMode, inActiveHours, preferredAreas, pickSuggestion, dueInfo, cleanLinks, resolveDayToken, daysBetween, defaultState, buildView, plural, DAY_MS,
   weekStart, sagaView, sagaNudgeDue, chapterOf, CHAPTER_XP, SAGA_XP, SAGA_SESSION_XP, SAGA_STEP_XP,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
