@@ -30,7 +30,14 @@ jobs:
         run: |
           V=$(node -p "require('./package.json').version")
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
-          if gh release view "v$V" >/dev/null 2>&1; then echo "exists=1" >> "$GITHUB_OUTPUT"; else echo "exists=0" >> "$GITHUB_OUTPUT"; fi
+          ASSETS=$(gh release view "v$V" --json assets --jq '[.assets[].name] | join(",")' 2>/dev/null || echo "__none__")
+          if [ "$ASSETS" = "__none__" ]; then echo "exists=0" >> "$GITHUB_OUTPUT"
+          elif echo "$ASSETS" | grep -q "latest.yml" && echo "$ASSETS" | grep -q "Setup-$V.exe,"; then echo "exists=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release v$V is incomplete ($ASSETS) - recreating"
+            gh release delete "v$V" --cleanup-tag -y
+            echo "exists=0" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build installer
         if: steps.ver.outputs.exists == '0'
         shell: bash
