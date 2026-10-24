@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
-# Build the Windows installer and publish it as a GitHub Release.
-# The installed app (electron-updater) picks up the release by latest.yml.
-# Usage: tools/release.sh [notes-file]
+# Release = tag push. CI (.github/workflows/release.yml) builds on Windows and publishes.
+# Usage: tools/release.sh   (bump package.json version and add release-notes/vX.Y.Z.md first)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VER=$(node -p "require('./package.json').version")
-export WINEDEBUG=-all
 npm test
-rm -rf dist
-npx electron-builder --win nsis --x64 --publish never
-NOTES=${1:-}
-gh release create "v$VER" \
-  "dist/Questbook-Setup-$VER.exe" \
-  "dist/Questbook-Setup-$VER.exe.blockmap" \
-  dist/latest.yml \
-  --repo twipz333/questbook --title "Questbook $VER" \
-  ${NOTES:+--notes-file "$NOTES"} ${NOTES:---generate-notes}
+git tag "v$VER"
+git push origin "v$VER"
+echo "Tag v$VER pushed — see GitHub Actions for the build."
